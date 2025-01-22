@@ -52,8 +52,8 @@ fn main() {
     }*/ //this struct is how the wifi options are configured for the client, which is the purpose of this code
     
     wifi.set_configuration(&Configuration::Client(ClientConfiguration { //configuration for client
-        ssid: "temp ssid".into(),
-        password: "temp pass".into(),
+        ssid: "Three_E42796".into(),
+        password: "2hG{w?24".into(),
         auth_method: AuthMethod::None, //could be used later for WPA3 implementation
         ..Default::default() //fills non specified methods with default config
     }))?; //note these brackets are closed here for the nested struture of accessing the clientconfig 
