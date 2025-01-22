@@ -32,6 +32,15 @@ embedded-hal = "1.0.0"  # updated
 embedded-svc = "0.28.1" # updated
 anyhow = "1.0.95" # added for integration with wifi template code
 heapless = "0.8.0" # needed because wifi config expects heapless strings as args
+esp-hal = { version =  "0.23.1", features = [ "esp32c3" , "embassy", "embassy-time-timg0", "embassy-executor-thread", "embassy-executor-interrupt"]} # embedded hals implementation for esp => both may be required
+embassy-executor = "0.7.0" # gives me embassy's executor
+embassy-sync = "0.6.2" # gives the synchroniser for syncing data between tasks
+embassy-time = "0.4.0" # timekeeping
+embassy-time-driver = { version = "0.2.0", optional = true } # optional if issues arise
+embedded-graphics = "0.8.1" # potentially useful for counter idea
+embedded-hal-async = "1.0.0" # async versions of embedded-hal
+embedded-hal-bus = "0.3.0" # has some i2c features
+embedded-io-async = "0.6.1" # async versions of embedded-io stuff
 
 [build-dependencies]
 embuild = "0.33"
