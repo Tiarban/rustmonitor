@@ -6,11 +6,12 @@ use esp_idf_hal::peripherals::Peripherals;
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_svc::wifi::EspWifi;
+use heapless::String; //for correct ssid data conversion
 
 const SSID: &str = "";
 const PASS: &str = ""; //should be hardcoded for now
 
-fn main() {
+fn main() -> anyhow::Result<()> { //anyhow::result is return type leveraging error control
     // It is necessary to call this function once. Otherwise some patches to the runtime
     // implemented by esp-idf-sys might not link properly. See https://github.com/esp-rs/esp-idf-template/issues/71
     esp_idf_svc::sys::link_patches();
@@ -34,6 +35,12 @@ fn main() {
     let mut wifi = EspWifi::new(peripherals.modem, sysloop, Some(nvs))?; // i/p to 'new' method on line 26
     //wifi mut is now the wifi handle driver (like peripherals)
 
+    let mut ssid = String::<32>::new();
+    ssid.push_str("Three_E42796").unwrap();
+
+    let mut password = String::<64>::new();
+    password.push_str("2hG{w?24").unwrap(); 
+
     //Wifi configuration
 
     /*pub enum Configuration {
@@ -52,8 +59,8 @@ fn main() {
     }*/ //this struct is how the wifi options are configured for the client, which is the purpose of this code
     
     wifi.set_configuration(&Configuration::Client(ClientConfiguration { //configuration for client
-        ssid: "Three_E42796".into(),
-        password: "2hG{w?24".into(),
+        ssid,
+        password, //explicit conversion -- .into() type conversion fails
         auth_method: AuthMethod::None, //could be used later for WPA3 implementation
         ..Default::default() //fills non specified methods with default config
     }))?; //note these brackets are closed here for the nested struture of accessing the clientconfig 

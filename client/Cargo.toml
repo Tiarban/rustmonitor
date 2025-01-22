@@ -31,6 +31,7 @@ esp-idf-hal = "0.45.2"  # updated from crates.io
 embedded-hal = "1.0.0"  # updated
 embedded-svc = "0.28.1" # updated
 anyhow = "1.0.95" # added for integration with wifi template code
+heapless = "0.8.0" # needed because wifi config expects heapless strings as args
 
 [build-dependencies]
 embuild = "0.33"
