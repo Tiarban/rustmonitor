@@ -1,8 +1,10 @@
  
 Final Year Project
- Status Report
+
 “Rust-powered multi-channel energy monitor for smart home applications”
+
 Name: Tiarnan Ryan
+
 Student Number: 19309926
 
 Project Description
