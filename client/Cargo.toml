@@ -25,11 +25,12 @@ experimental = ["esp-idf-svc/experimental"]
 [dependencies]
 log = "0.4"
 esp-idf-svc = { version = "0.51", features = ["critical-section", "embassy-time-driver", "embassy-sync"] }
-esp-idf-sys = { version = "0.31.11", features = ["binstart"] } 
+esp-idf-sys = { version = "0.36.1", features = ["binstart"] } #updated
 #esp-idf-svc = "0.43.4" # unnecessary
 esp-idf-hal = "0.45.2"  # updated from crates.io
 embedded-hal = "1.0.0"  # updated
 embedded-svc = "0.28.1" # updated
+anyhow = "1.0.95" # added for integration with wifi template code
 
 [build-dependencies]
 embuild = "0.33"

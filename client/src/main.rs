@@ -1,12 +1,11 @@
 use std::{thread::sleep, time::Duration, sync::{Mutex, Arc}, str::from_utf8, collections::HashMap};
 
-use accel_stepper::{Driver, OperatingSystemClock};
-use embedded_svc::{wifi::{Configuration, ClientConfiguration, AuthMethod}, http::Method::Post,http::Method::Get, io::Read};
-use esp_idf_hal::{peripheral::Peripheral, prelude::Peripherals, gpio::PinDriver, ledc::{LedcTimerDriver, config::TimerConfig, LedcDriver}};
-use esp_idf_svc::{eventloop::EspSystemEventLoop, nvs::{EspNvsPartition, NvsDefault, EspDefaultNvsPartition}, timer::{EspTimerService, Task, EspTaskTimerService}, wifi::{AsyncWifi, EspWifi}, ping::EspPing, http::server::EspHttpServer};
-use esp_idf_sys as _; // If using the `binstart` feature of `esp-idf-sys`, always keep this module imported (i am)
-use log::*;
-use esp_idf_hal::units::*;
+use anyhow::{self, Error};
+use embedded_svc::wifi::{AuthMethod, ClientConfiguration, Configuration};
+use esp_idf_hal::peripherals::Peripherals;
+use esp_idf_svc::eventloop::EspSystemEventLoop;
+use esp_idf_svc::nvs::EspDefaultNvsPartition;
+use esp_idf_svc::wifi::EspWifi;
 
 const SSID: &str = "";
 const PASS: &str = ""; //should be hardcoded for now
@@ -19,60 +18,57 @@ fn main() {
     // Bind the log crate to the ESP Logging facilities
     esp_idf_svc::log::EspLogger::initialize_default();
 
-    let peripherals = Peripherals::take().unwrap();
-    let sysloop = EspSystemEventLoop::take().unwrap();
-    let timer_service = EspTaskTimerService::new().unwrap();
-    let _wifi = wifi(peripherals.modem, sysloop,Some(EspDefaultNvsPartition::take().unwrap()),timer_service).unwrap(); //nvs saves wifi state to persistent memory
+    //handles:
 
-    log::info!("Hello, world!");
-}
+    let peripherals = Peripherals::take().unwrap(); //get peripheral handle
 
-//wifi connect code
+    let sysloop = EspSystemEventLoop::take()?; //creates system event loop associated with wifi
+    let nvs = EspDefaultNvsPartition::take()?; //non volatile partition to store needed data
 
-pub fn wifi(
-    modem: impl Peripheral<P = esp_idf_hal::modem::Modem> + 'static,
-    sysloop: EspSystemEventLoop,
-    nvs: Option<EspNvsPartition<NvsDefault>>,
-    timer_service: EspTimerService<Task>,
-) -> anyhow::Result<AsyncWifi<EspWifi<'static>>> {
-    use futures::executor::block_on;
-    let mut wifi = AsyncWifi::wrap(
-        EspWifi::new(modem, sysloop.clone(), nvs)?, sysloop,
-        timer_service.clone(),
-    )?;
+     /*pub fn new<M: WifiModemPeripheral>(
+        modem: impl Peripheral<P = M> + 'd,
+        sysloop: EspSystemEventLoop,
+        nvs: Option<EspDefaultNvsPartition>
+    ) -> Result<Self, EspError> */ // this is the signature of the method to get wifi driver handle
 
-    block_on(connect_wifi(&mut wifi))?;
+    let mut wifi = EspWifi::new(peripherals.modem, sysloop, Some(nvs))?; // i/p to 'new' method on line 26
+    //wifi mut is now the wifi handle driver (like peripherals)
 
-    let ip_info = wifi.wifi().sta_netif().get_ip_info()?;
+    //Wifi configuration
 
-    println!("Wifi DHCP info: {:?}", ip_info);
+    /*pub enum Configuration {
+        None,
+        Client(ClientConfiguration),
+        AccessPoint(AccessPointConfiguration),
+        Mixed(ClientConfiguration, AccessPointConfiguration),
+    }*/ // this enum is set for client, ap or mixed configuration.
     
-    EspPing::default().ping(ip_info.subnet.gateway, &embedded_svc::ping::Configuration::default())?;
-    Ok(wifi)
+    /*pub struct ClientConfiguration {
+        pub ssid: String<32>,
+        pub bssid: Option<[u8; 6]>,
+        pub auth_method: AuthMethod,
+        pub password: String<64>,
+        pub channel: Option<u8>,
+    }*/ //this struct is how the wifi options are configured for the client, which is the purpose of this code
+    
+    wifi.set_configuration(&Configuration::Client(ClientConfiguration { //configuration for client
+        ssid: "temp ssid".into(),
+        password: "temp pass".into(),
+        auth_method: AuthMethod::None, //could be used later for WPA3 implementation
+        ..Default::default() //fills non specified methods with default config
+    }))?; //note these brackets are closed here for the nested struture of accessing the clientconfig 
 
+    wifi.start()?;
+
+    wifi.connect()?; //self explanatory lines
+
+    while !wifi.is_connected().unwrap() {
+        // Get and print connetion configuration
+        let config = wifi.get_configuration().unwrap();
+        println!("Waiting for station {:?}", config);
+    }
+    
+    println!("Connected"); //boilerplate for checking connection
+
+    Ok(()) //returns Result type if it's ok - no errors detected
 }
-
-async fn connect_wifi(wifi: &mut AsyncWifi<EspWifi<'static>>) -> anyhow::Result<()> {  //non blocking async function
-    let wifi_configuration: Configuration = Configuration::Client(ClientConfiguration {
-        ssid: SSID.into(),
-        bssid: None,
-        auth_method: AuthMethod::WPA2Personal,
-        password: PASS.into(),
-        channel: None,
-    });
-
-    wifi.set_configuration(&wifi_configuration)?;
-
-    wifi.start().await?;
-    info!("Wifi started"); //? propogates error automatically, only returning success if Ok type produced from Result enum
-
-    wifi.connect().await?;
-    info!("Wifi connected"); //await 
-
-    wifi.wait_netif_up().await?;
-    info!("Wifi netif up");
-
-    Ok(())   //if no error detected
-}
-
-//end of wifi connect code
