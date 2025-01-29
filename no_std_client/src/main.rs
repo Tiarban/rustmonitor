@@ -212,8 +212,6 @@ async fn main(spawner: Spawner) {
     spawner.spawn(read_current()).ok();
     spawner.spawn(sta_task(sta_runner)).ok();
 
-esp_println::println!("📡 MAC Address: {:?}", mac);
- //returns Result type if it's ok - no errors detected
 
  loop {
     if let Some(ip_config) = sta_stack.config_v4() {
