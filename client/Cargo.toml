@@ -20,27 +20,38 @@ opt-level = "z"
 [features]
 default = []
 
-experimental = ["esp-idf-svc/experimental"]
+#experimental = ["esp-idf-svc/experimental"]
 
 [dependencies]
 log = "0.4"
-esp-idf-svc = { version = "0.51", features = ["critical-section", "embassy-time-driver", "embassy-sync"] }
-esp-idf-sys = { version = "0.36.1", features = ["binstart"] } #updated
+#esp-idf-svc = { version = "0.51", default-features = false ,features = ["embassy-time-driver", "embassy-sync"] }
+#esp-idf-sys = { version = "0.36.1", features = ["binstart"] } #updated
 #esp-idf-svc = "0.43.4" # unnecessary
-esp-idf-hal = "0.45.2"  # updated from crates.io
-embedded-hal = "1.0.0"  # updated
-embedded-svc = "0.28.1" # updated
+#esp-idf-hal = "0.45.2"  # updated from crates.io
+#embedded-hal = "1.0.0"  # updated
+#embedded-svc = "0.28.1" # updated
 anyhow = "1.0.95" # added for integration with wifi template code
 heapless = "0.8.0" # needed because wifi config expects heapless strings as args
-esp-hal = { version =  "0.23.1", features = [ "esp32c3" , "embassy", "embassy-time-timg0", "embassy-executor-thread", "embassy-executor-interrupt"]} # embedded hals implementation for esp => both may be required
-embassy-executor = "0.7.0" # gives me embassy's executor
-embassy-sync = "0.6.2" # gives the synchroniser for syncing data between tasks
-embassy-time = "0.4.0" # timekeeping
-embassy-time-driver = { version = "0.2.0", optional = true } # optional if issues arise
-embedded-graphics = "0.8.1" # potentially useful for counter idea
-embedded-hal-async = "1.0.0" # async versions of embedded-hal
-embedded-hal-bus = "0.3.0" # has some i2c features
-embedded-io-async = "0.6.1" # async versions of embedded-io stuff
+#esp-hal = { version =  "0.23.1", features = [ "esp32c3" ]} # embedded hals implementation for esp => both may be required
+#critical-section = { version = "1.2", default-features = false, features = ["restore-state-u8"] }
+#embassy-executor ={version = "0.7.0"}
+#embassy-sync = "0.6.2" # gives the synchroniser for syncing data between tasks
+#embassy-time = "0.4.0" # timekeeping
+#embassy-time-driver = { version = "0.2.0", optional = true } # optional if issues arise
+#embedded-graphics = "0.8.1" # potentially useful for counter idea
+#embedded-hal-async = "1.0.0" # async versions of embedded-hal
+#embedded-hal-bus = "0.3.0" # has some i2c features
+#embedded-io-async = "0.6.1" # async versions of embedded-io stuff
+esp-println = { version = "0.13.0", features = ["esp32c3"] }
+#esp-hal-embassy = { version = "0.6.0", default-features = false, features = ["esp32c3"] }
+#portable-atomic = { version = "1.10.0", default-features = false }
+esp-backtrace = {version = "0.15.0", features = ["esp32c3", "println"]}
+esp-hal-embassy = {version = "0.6.0", features = ["esp32c3"], default-features = false}
+portable-atomic = { version = "1.10.0", default-features = false, features = ["require-cas"] }
+
+[patch.crates-io]
+embassy-executor = { git = 'https://github.com/embassy-rs/embassy.git' }
 
 [build-dependencies]
 embuild = "0.33"
+esp-build = "=0.2.0"
