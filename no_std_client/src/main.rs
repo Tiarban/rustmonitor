@@ -46,11 +46,12 @@ async fn main(spawner: Spawner) {
 use embassy_executor::Spawner; //embassy's executor's spawner
 use embassy_time::{Duration, Timer}; //now duration and timer is from embassy time
 use esp_backtrace as _; //as _ imported but not used
-use heapless::String;
+use heapless::{String, Vec};
 
 use core::net::Ipv4Addr;
 
 use embassy_net::{
+    Config,
     tcp::TcpSocket,
     IpListenEndpoint,
     Ipv4Cidr,
@@ -74,6 +75,8 @@ use esp_wifi::{
     },
     EspWifiController,
 };
+use smoltcp::wire::Ipv4Address;
+
 
 macro_rules! mk_static { //alternative to normal static cell for persistent storage (like nvs from esp-idf-svc)
     ($t:ty,$val:expr) => {{
@@ -98,7 +101,7 @@ async fn sta_task(mut runner: Runner<'static, WifiDevice<'static, WifiStaDevice>
     runner.run().await
 }
 
-#[embassy_executor::task]
+//no task -> needs to be synchronous as this function must happen before net tasks
 async fn setup_wifi (ssid: String<32>, password: String<64>, mut wifi: WifiController<'static> ) { //static extends lifetime - compiler complains
      //Wifi configuration
 
@@ -136,7 +139,8 @@ async fn setup_wifi (ssid: String<32>, password: String<64>, mut wifi: WifiContr
         Timer::after(Duration::from_millis(5000)).await; //added non blocking delay before checking again if wifi is connected 
     }
     
-    esp_println::println!("Connected"); //boilerplate for checking connection
+    esp_println::println!("Connected" ); //boilerplate for checking connection
+    
 } 
 
 #[esp_hal_embassy::main]
@@ -151,7 +155,12 @@ async fn main(spawner: Spawner) {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max()); //sets clock to max clock speed
     let peripherals = esp_hal::init(config);//get peripheral using esp_hal abstraction
 
+    esp_alloc::heap_allocator!(72 * 1024);
+
     let timg0 = TimerGroup::new(peripherals.TIMG0);
+
+    let timg1 = TimerGroup::new(peripherals.TIMG1);
+        esp_hal_embassy::init(timg1.timer0);
 
     let mut rng = Rng::new(peripherals.RNG); // Random Number Generator
 
@@ -165,6 +174,8 @@ async fn main(spawner: Spawner) {
     let (_wifi_ap_interface, wifi_sta_interface, mut controller) =
         esp_wifi::wifi::new_ap_sta(&init, wifi).unwrap();
 
+    
+
      /*pub fn new<M: WifiModemPeripheral>(
         modem: impl Peripheral<P = M> + 'd,
         sysloop: EspSystemEventLoop,
@@ -177,9 +188,16 @@ async fn main(spawner: Spawner) {
     let mut password = String::<64>::new();
     password.push_str("2hG{w?24").unwrap(); 
 
-    spawner.spawn(setup_wifi(ssid, password, controller)).ok();
+    setup_wifi(ssid, password, controller).await;
 
-    let sta_config = embassy_net::Config::dhcpv4(Default::default());
+    let mut dns_servers = Vec::<Ipv4Address, 3>::new();
+    dns_servers.push(Ipv4Address::new(8, 8, 8, 8)).unwrap();
+
+    let sta_config = embassy_net::Config::ipv4_static(StaticConfigV4 {
+        address: Ipv4Cidr::new(Ipv4Address::new(192, 168, 18, 50), 24), // Static IP
+        gateway: Some(Ipv4Address::new(192, 168, 18, 1)), // Router IP
+        dns_servers, // Google DNS
+    });
 
     let seed = (rng.random() as u64) << 32 | rng.random() as u64;
 
@@ -193,7 +211,23 @@ async fn main(spawner: Spawner) {
 
     spawner.spawn(read_current()).ok();
     spawner.spawn(sta_task(sta_runner)).ok();
+
+esp_println::println!("📡 MAC Address: {:?}", mac);
  //returns Result type if it's ok - no errors detected
+
+ loop {
+    if let Some(ip_config) = sta_stack.config_v4() {
+        esp_println::println!("IP Address: {:?}", ip_config.address);
+        break;
+    } else {
+        esp_println::println!("Since DHCP is disabled here, IP address failed to be assigned");
+    }
+    Timer::after(Duration::from_secs(1)).await;
+}
+
+loop {
+    Timer::after(Duration::from_secs(5)).await;
+}
 }
 
 /* 
