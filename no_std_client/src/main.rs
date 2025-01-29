@@ -50,7 +50,7 @@ use heapless::{String, Vec};
 
 use core::net::Ipv4Addr;
 
-use embassy_net::{
+use embassy_net::{ //provides stack for tcp stuff etc. for communcation, not connection
     Config,
     tcp::TcpSocket,
     IpListenEndpoint,
@@ -62,7 +62,7 @@ use embassy_net::{
 use esp_alloc as _;
 use esp_hal::{clock::CpuClock, rng::Rng, timer::timg::TimerGroup};
 use esp_println::{print, println};
-use esp_wifi::{
+use esp_wifi::{ //just for connection, embassy-net handles communication stuff in the stack
     init,
     wifi::{
         ClientConfiguration,
@@ -155,24 +155,25 @@ async fn main(spawner: Spawner) {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max()); //sets clock to max clock speed
     let peripherals = esp_hal::init(config);//get peripheral using esp_hal abstraction
 
-    esp_alloc::heap_allocator!(72 * 1024);
+    esp_alloc::heap_allocator!(72 * 1024); //have to manually set heap
 
-    let timg0 = TimerGroup::new(peripherals.TIMG0);
+    let timg0 = TimerGroup::new(peripherals.TIMG0); //first timer for peripheral stuff
 
-    let timg1 = TimerGroup::new(peripherals.TIMG1);
+    let timg1 = TimerGroup::new(peripherals.TIMG1); //embassy timer for async stuff
         esp_hal_embassy::init(timg1.timer0);
 
-    let mut rng = Rng::new(peripherals.RNG); // Random Number Generator
+    let mut rng = Rng::new(peripherals.RNG); // random number generation for dhcp and initialisation of controller
 
     let init = &*mk_static!(
         EspWifiController<'static>,
         init(timg0.timer0, rng.clone(), peripherals.RADIO_CLK).unwrap() //switched rng.clone to into, not sure the consequences
     );
 
-    let wifi = peripherals.WIFI;
+    let wifi = peripherals.WIFI; //handle for peripherals
 
     let (_wifi_ap_interface, wifi_sta_interface, mut controller) =
-        esp_wifi::wifi::new_ap_sta(&init, wifi).unwrap();
+        esp_wifi::wifi::new_ap_sta(&init, wifi).unwrap(); //_ap interface wont be used, just the sta_interface. Controller is now how i do everything like connecting etc similar to how 
+        //it was done in esp-idf-svc. 
 
     
 
@@ -190,19 +191,19 @@ async fn main(spawner: Spawner) {
 
     setup_wifi(ssid, password, controller).await;
 
-    let mut dns_servers = Vec::<Ipv4Address, 3>::new();
+    let mut dns_servers = Vec::<Ipv4Address, 3>::new(); //setting DNS vector, this is googles for default
     dns_servers.push(Ipv4Address::new(8, 8, 8, 8)).unwrap();
 
-    let sta_config = embassy_net::Config::ipv4_static(StaticConfigV4 {
-        address: Ipv4Cidr::new(Ipv4Address::new(192, 168, 18, 50), 24), // Static IP
-        gateway: Some(Ipv4Address::new(192, 168, 18, 1)), // Router IP
-        dns_servers, // Google DNS
+    let sta_config = embassy_net::Config::ipv4_static(StaticConfigV4 {  //setting static ipv4 address since i couldnt get dhcp working in this context and i think itll be easier to identify the sensors
+        address: Ipv4Cidr::new(Ipv4Address::new(192, 168, 18, 50), 24), // ip for my device
+        gateway: Some(Ipv4Address::new(192, 168, 18, 1)), // router ip from home router
+        dns_servers, 
     });
 
-    let seed = (rng.random() as u64) << 32 | rng.random() as u64;
+    let seed = (rng.random() as u64) << 32 | rng.random() as u64; //set rng seed
 
 
-    let (sta_stack, sta_runner) = embassy_net::new(
+    let (sta_stack, sta_runner) = embassy_net::new( //getting the network stack 
         wifi_sta_interface,
         sta_config,
         mk_static!(StackResources<3>, StackResources::<3>::new()),
@@ -222,6 +223,12 @@ async fn main(spawner: Spawner) {
     }
     Timer::after(Duration::from_secs(1)).await;
 }
+
+let mut sta_rx_buffer = [0; 1536];
+let mut sta_tx_buffer = [0; 1536];
+
+let mut sta_socket = TcpSocket::new(sta_stack, &mut sta_rx_buffer, &mut sta_tx_buffer);
+sta_socket.set_timeout(Some(embassy_time::Duration::from_secs(10)));
 
 loop {
     Timer::after(Duration::from_secs(5)).await;
