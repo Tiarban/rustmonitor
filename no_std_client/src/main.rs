@@ -87,11 +87,16 @@ macro_rules! mk_static { //alternative to normal static cell for persistent stor
     }};
 }
 
+struct SensorData { //struct for storing sensor id and data (id should be based on ip)
+    sensor_id: u32,
+    sensor_value: f32,
+}
 
 #[embassy_executor::task]
 async fn read_current () { //for reading data
+    let data = SensorData { sensor_id: 50, sensor_value: 50.0};
     loop{
-        esp_println::println!("Reading data"); //placeholder
+        esp_println::println!("Reading data: {:.1} From sensor: {}", data.sensor_value, data.sensor_id); //placeholder
         Timer::after(Duration::from_millis(1000)).await; //return ctrl to executor
     }
 }
