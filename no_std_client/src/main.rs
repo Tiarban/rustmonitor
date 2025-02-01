@@ -49,6 +49,7 @@ use esp_backtrace as _; //as _ imported but not used
 use heapless::{String, Vec};
 
 use core::net::Ipv4Addr;
+use serde::Serialize;
 
 use embassy_net::{ //provides stack for tcp stuff etc. for communcation, not connection
     Config,
@@ -76,6 +77,9 @@ use esp_wifi::{ //just for connection, embassy-net handles communication stuff i
     EspWifiController,
 };
 use smoltcp::wire::Ipv4Address;
+use serde_json_core::to_string;
+
+use embedded_io_async::Write;
 
 
 macro_rules! mk_static { //alternative to normal static cell for persistent storage (like nvs from esp-idf-svc)
@@ -86,17 +90,22 @@ macro_rules! mk_static { //alternative to normal static cell for persistent stor
         x
     }};
 }
-
+#[derive(serde::Serialize)] //need to send this data so declaring serialisable 
 struct SensorData { //struct for storing sensor id and data (id should be based on ip)
-    sensor_id: u32,
+    sensor_id: u8,
     sensor_value: f32,
 }
 
 #[embassy_executor::task]
-async fn read_current () { //for reading data
-    let data = SensorData { sensor_id: 50, sensor_value: 50.0};
+async fn read_send_current (mut socket: TcpSocket<'static>) { //for reading data
+    let data = SensorData { sensor_id: 50, sensor_value: 50.0}; //placeholder for reading current via i2c
+    //let jbuffer = [0u8; 1024]; //128 birs fine probably since struct is small note: couldnt get buffer to work so string instead
+    let sendable:String<128>  = serde_json_core::to_string(&data).unwrap(); //slice up data for transmission
+
     loop{
         esp_println::println!("Reading data: {:.1} From sensor: {}", data.sensor_value, data.sensor_id); //placeholder
+        esp_println::println!("Sending data...");
+        socket.write_all(sendable.as_bytes()).await; //write all data to socket until end of buffer.len
         Timer::after(Duration::from_millis(1000)).await; //return ctrl to executor
     }
 }
@@ -215,7 +224,6 @@ async fn main(spawner: Spawner) {
         seed,
     );
 
-    spawner.spawn(read_current()).ok();
     spawner.spawn(sta_task(sta_runner)).ok();
 
 
@@ -234,6 +242,7 @@ let mut sta_tx_buffer = [0; 1536];
 
 let mut sta_socket = TcpSocket::new(sta_stack, &mut sta_rx_buffer, &mut sta_tx_buffer);
 sta_socket.set_timeout(Some(embassy_time::Duration::from_secs(10)));
+spawner.spawn(read_send_current(sta_socket)).ok();
 
 loop {
     Timer::after(Duration::from_secs(5)).await;
