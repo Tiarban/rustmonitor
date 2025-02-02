@@ -60,7 +60,6 @@ const GW_IP_ADDR_ENV: Option<&'static str> = option_env!("GATEWAY_IP");
 
 #[esp_hal_embassy::main]
 async fn main(spawner: Spawner) -> ! {
-    
     esp_println::logger::init_logger_from_env();
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
@@ -174,15 +173,15 @@ async fn main(spawner: Spawner) -> ! {
         }
 
         let r = socket
-            .write_all(
+            .write_all( 
                 b"HTTP/1.0 200 OK\r\n\r\n\
             <html>\
                 <body>\
-                    <h1>Hello Rust! Hello esp-wifi!</h1>\
+                    <h1>imagine being hardstuck diamond 1 lmao</h1>\
                 </body>\
             </html>\r\n\
             ",
-            )
+            ) //displays method on browser 
             .await;
         if let Err(e) = r {
             println!("write error: {:?}", e);
@@ -201,7 +200,7 @@ async fn main(spawner: Spawner) -> ! {
     }
 }
 
-#[embassy_executor::task(pool_size = 10)]
+#[embassy_executor::task]
 async fn run_dhcp(stack: Stack<'static>, gw_ip_addr: &'static str) {
     use core::net::{Ipv4Addr, SocketAddrV4};
 
@@ -241,7 +240,7 @@ async fn run_dhcp(stack: Stack<'static>, gw_ip_addr: &'static str) {
     }
 }
 
-#[embassy_executor::task(pool_size = 10)]
+#[embassy_executor::task]
 async fn connection(mut controller: WifiController<'static>) {
     println!("start connection task");
     println!("Device capabilities: {:?}", controller.capabilities());
@@ -255,7 +254,7 @@ async fn connection(mut controller: WifiController<'static>) {
             _ => {}
         }
         if !matches!(controller.is_started(), Ok(true)) {
-            let client_config = Configuration::AccessPoint(AccessPointConfiguration {
+            let client_config = Configuration::AccessPoint(AccessPointConfiguration { //configures access point w/SSID esp-wifi and no password
                 ssid: "esp-wifi".try_into().unwrap(),
                 ..Default::default()
             });
@@ -267,7 +266,7 @@ async fn connection(mut controller: WifiController<'static>) {
     }
 }
 
-#[embassy_executor::task(pool_size = 10)]
+#[embassy_executor::task]
 async fn net_task(mut runner: Runner<'static, WifiDevice<'static, WifiApDevice>>) {
     runner.run().await
 }

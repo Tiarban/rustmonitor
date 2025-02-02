@@ -30,6 +30,7 @@ cfg-if = "1.0.0"
 edge-dhcp = "0.5.0"
 edge-nal-embassy = "0.5.0"
 edge-nal = "0.5.0"
+serde-json-core = "0.6.0"
 
 [profile.dev]
 # Rust debug is too slow.
