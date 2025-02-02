@@ -52,13 +52,7 @@ use core::net::Ipv4Addr;
 use serde::Serialize;
 
 use embassy_net::{ //provides stack for tcp stuff etc. for communcation, not connection
-    Config,
-    tcp::TcpSocket,
-    IpListenEndpoint,
-    Ipv4Cidr,
-    Runner,
-    StackResources,
-    StaticConfigV4,
+    tcp::TcpSocket, Config, IpEndpoint, Ipv4Cidr, Runner, Stack, StackResources, StaticConfigV4
 };
 use esp_alloc as _;
 use esp_hal::{clock::CpuClock, rng::Rng, timer::timg::TimerGroup};
@@ -82,7 +76,7 @@ use serde_json_core::to_string;
 use embedded_io_async::Write;
 
 
-macro_rules! mk_static { //alternative to normal static cell for persistent storage (like nvs from esp-idf-svc)
+macro_rules! mk_static { //alternative to normal static cell for persistent storage (like nvs from esp-idf-svc) safer than static
     ($t:ty,$val:expr) => {{
         static STATIC_CELL: static_cell::StaticCell<$t> = static_cell::StaticCell::new();
         #[deny(unused_attributes)]
@@ -97,22 +91,48 @@ struct SensorData { //struct for storing sensor id and data (id should be based 
 }
 
 #[embassy_executor::task]
-async fn read_send_current (mut socket: TcpSocket<'static>) { //for reading data
+async fn read_send_current (mut sta_stack: Stack<'static>) { //for reading data
+let mut sta_rx_buffer = [0; 1536];
+let mut sta_tx_buffer = [0; 1536];
+
+
+
+let mut sta_socket = TcpSocket::new(sta_stack, &mut sta_rx_buffer, &mut sta_tx_buffer);
+sta_socket.set_timeout(Some(embassy_time::Duration::from_secs(10)));
+
+
     let data = SensorData { sensor_id: 50, sensor_value: 50.0}; //placeholder for reading current via i2c
     //let jbuffer = [0u8; 1024]; //128 birs fine probably since struct is small note: couldnt get buffer to work so string instead
     let sendable:String<128>  = serde_json_core::to_string(&data).unwrap(); //slice up data for transmission
 
-    loop{
+   /* loop{
         esp_println::println!("Reading data: {:.1} From sensor: {}", data.sensor_value, data.sensor_id); //placeholder
         esp_println::println!("Sending data...");
-        socket.write_all(sendable.as_bytes()).await; //write all data to socket until end of buffer.len
+        sta_socket.write_all(sendable.as_bytes()).await.ok(); //write all data to socket until end of buffer.len (not sure if ok() should be here)
         Timer::after(Duration::from_millis(1000)).await; //return ctrl to executor
+    } */
+
+    let server_ip = Ipv4Address::new(192, 168, 2, 1);
+    let server_port = 8080;
+    let server_endpoint = IpEndpoint::new(server_ip.into(), server_port);
+
+    loop {
+        match sta_socket.connect(server_endpoint).await {
+            Ok(_) => {
+                println!("✅ Connected to server!");
+                
+            }
+            Err(e) => {
+                println!("❌ Connection failed: {:?}", e);
+                Timer::after(Duration::from_secs(5)).await; // ✅ Retry after delay
+            }
+        }
     }
 }
 
 #[embassy_executor::task]
 async fn sta_task(mut runner: Runner<'static, WifiDevice<'static, WifiStaDevice>>) {
-    runner.run().await
+    runner.run().await //mystery code
 }
 
 //no task -> needs to be synchronous as this function must happen before net tasks
@@ -137,7 +157,7 @@ async fn setup_wifi (ssid: String<32>, password: String<64>, mut wifi: WifiContr
     wifi.set_configuration(&Configuration::Client(ClientConfiguration { //configuration for client
         ssid,
         password, //explicit defining done above - examples for using .into() or from here dont work
-                    //could be used later for WPA3 implementation
+                    //auth method could be used later for WPA3 implementation
         ..Default::default() //fills non specified methods with default config
     })).unwrap(); //note these brackets are closed here for the nested struture of accessing the clientconfig 
 
@@ -185,11 +205,9 @@ async fn main(spawner: Spawner) {
 
     let wifi = peripherals.WIFI; //handle for peripherals
 
-    let (_wifi_ap_interface, wifi_sta_interface, mut controller) =
-        esp_wifi::wifi::new_ap_sta(&init, wifi).unwrap(); //_ap interface wont be used, just the sta_interface. Controller is now how i do everything like connecting etc similar to how 
+    let (_wifi_ap_interface, wifi_sta_interface, mut wifi) =
+        esp_wifi::wifi::new_ap_sta(&init, wifi).unwrap(); //_ap_interface wont be used, just the sta_interface. Controller is now how i do everything like connecting etc similar to how 
         //it was done in esp-idf-svc. 
-
-    
 
      /*pub fn new<M: WifiModemPeripheral>(
         modem: impl Peripheral<P = M> + 'd,
@@ -198,21 +216,42 @@ async fn main(spawner: Spawner) {
     ) -> Result<Self, EspError> */ // this is the signature of the method to get wifi driver handle
 
     let mut ssid = String::<32>::new();
-    ssid.push_str("Three_E42796").unwrap(); //explicit type required for config for both 
+    ssid.push_str("esp-wifi").unwrap(); //explicit type required for config for both Three_E42796
 
     let mut password = String::<64>::new();
-    password.push_str("2hG{w?24").unwrap(); 
-
-    setup_wifi(ssid, password, controller).await;
+    password.push_str("").unwrap(); //2hG{w?24
 
     let mut dns_servers = Vec::<Ipv4Address, 3>::new(); //setting DNS vector, this is googles for default
     dns_servers.push(Ipv4Address::new(8, 8, 8, 8)).unwrap();
 
     let sta_config = embassy_net::Config::ipv4_static(StaticConfigV4 {  //setting static ipv4 address since i couldnt get dhcp working in this context and i think itll be easier to identify the sensors
-        address: Ipv4Cidr::new(Ipv4Address::new(192, 168, 18, 50), 24), // ip for my device
-        gateway: Some(Ipv4Address::new(192, 168, 18, 1)), // router ip from home router
+        address: Ipv4Cidr::new(Ipv4Address::new(192, 168, 2, 10), 24), // ip for client
+        gateway: Some(Ipv4Address::new(192, 168, 2, 1)), // ip for server router
         dns_servers, 
     });
+
+    wifi.set_configuration(&Configuration::Client(ClientConfiguration { //configuration for client
+        ssid,
+        auth_method: esp_wifi::wifi::AuthMethod::None,
+         //explicit defining done above - examples for using .into() or from here dont work
+                    //auth method could be used later for WPA3 implementation
+        ..Default::default() //fills non specified methods with default config
+    })).unwrap(); //note these brackets are closed here for the nested struture of accessing the clientconfig 
+    
+    wifi.start().unwrap(); //start_async made in esp-wifi for async ops
+    
+    //wifi.connect_async().await.unwrap(); //self explanatory lines
+    
+    while !wifi.is_connected().unwrap() {
+        // Get and print connetion configuration
+        wifi.connect().unwrap(); //self explanatory lines
+        let config = wifi.configuration().unwrap();
+        esp_println::println!("Waiting for station {:?}", config);
+    
+        Timer::after(Duration::from_millis(5000)).await; //added non blocking delay before checking again if wifi is connected 
+    }
+    
+    esp_println::println!("Connected" ); //boilerplate for checking connection
 
     let seed = (rng.random() as u64) << 32 | rng.random() as u64; //set rng seed
 
@@ -240,9 +279,41 @@ async fn main(spawner: Spawner) {
 let mut sta_rx_buffer = [0; 1536];
 let mut sta_tx_buffer = [0; 1536];
 
+
+
 let mut sta_socket = TcpSocket::new(sta_stack, &mut sta_rx_buffer, &mut sta_tx_buffer);
 sta_socket.set_timeout(Some(embassy_time::Duration::from_secs(10)));
-spawner.spawn(read_send_current(sta_socket)).ok();
+
+
+    let data = SensorData { sensor_id: 50, sensor_value: 50.0}; //placeholder for reading current via i2c
+    //let jbuffer = [0u8; 1024]; //128 birs fine probably since struct is small note: couldnt get buffer to work so string instead
+    let sendable:String<128>  = serde_json_core::to_string(&data).unwrap(); //slice up data for transmission
+
+   /* loop{
+        esp_println::println!("Reading data: {:.1} From sensor: {}", data.sensor_value, data.sensor_id); //placeholder
+        esp_println::println!("Sending data...");
+        sta_socket.write_all(sendable.as_bytes()).await.ok(); //write all data to socket until end of buffer.len (not sure if ok() should be here)
+        Timer::after(Duration::from_millis(1000)).await; //return ctrl to executor
+    } */
+
+    let server_ip = Ipv4Address::new(192, 168, 2, 1);
+    let server_port = 8080;
+    let server_endpoint = IpEndpoint::new(server_ip.into(), server_port);
+
+    loop {
+        match sta_socket.connect(server_endpoint).await {
+            Ok(_) => {
+                println!("✅ Connected to server!");
+                
+            }
+            Err(e) => {
+                println!("❌ Connection failed: {:?}", e);
+                Timer::after(Duration::from_secs(5)).await; // ✅ Retry after delay
+            }
+        }
+    }
+
+    //spawner.spawn(read_send_current(sta_stack)).ok();
 
 loop {
     Timer::after(Duration::from_secs(5)).await;
