@@ -48,30 +48,27 @@ use embassy_time::{Duration, Timer}; //now duration and timer is from embassy ti
 use esp_backtrace as _; //as _ imported but not used
 use heapless::{String, Vec};
 
-use core::net::Ipv4Addr;
-use serde::Serialize;
+use core;
+use serde;
 
 use embassy_net::{ //provides stack for tcp stuff etc. for communcation, not connection
-    tcp::TcpSocket, Config, IpEndpoint, Ipv4Cidr, Runner, Stack, StackResources, StaticConfigV4
+    tcp::TcpSocket, IpEndpoint, Ipv4Cidr, Runner, Stack, StackResources, StaticConfigV4
 };
 use esp_alloc as _;
 use esp_hal::{clock::CpuClock, rng::Rng, timer::timg::TimerGroup};
-use esp_println::{print, println};
+use esp_println::println;
 use esp_wifi::{ //just for connection, embassy-net handles communication stuff in the stack
     init,
     wifi::{
         ClientConfiguration,
         Configuration,
-        WifiController,
-        WifiEvent,
         WifiDevice,
         WifiStaDevice,
-        WifiState,
     },
     EspWifiController,
 };
 use smoltcp::wire::Ipv4Address;
-use serde_json_core::to_string;
+use serde_json_core;
 
 use embedded_io_async::Write;
 
@@ -91,19 +88,20 @@ struct SensorData { //struct for storing sensor id and data (id should be based 
 }
 
 #[embassy_executor::task]
-async fn read_send_current (mut sta_stack: Stack<'static>) { //for reading data
-let mut sta_rx_buffer = [0; 1536];
-let mut sta_tx_buffer = [0; 1536];
+async fn read_send_current (sta_stack: Stack<'static>) { //for reading data
+    let mut sta_rx_buffer = [0; 1536];
+    let mut sta_tx_buffer = [0; 1536];
 
 
 
-let mut sta_socket = TcpSocket::new(sta_stack, &mut sta_rx_buffer, &mut sta_tx_buffer);
-sta_socket.set_timeout(Some(embassy_time::Duration::from_secs(10)));
+    let mut sta_socket = TcpSocket::new(sta_stack, &mut sta_rx_buffer, &mut sta_tx_buffer);
+    sta_socket.set_timeout(Some(embassy_time::Duration::from_secs(10)));
 
 
     let data = SensorData { sensor_id: 50, sensor_value: 50.0}; //placeholder for reading current via i2c
     //let jbuffer = [0u8; 1024]; //128 birs fine probably since struct is small note: couldnt get buffer to work so string instead
-    let sendable:String<128>  = serde_json_core::to_string(&data).unwrap(); //slice up data for transmission
+    let mut sendable:String<128>  = serde_json_core::to_string(&data).unwrap(); //slice up data for transmission
+    sendable.push_str("\r\n\r\n").unwrap(); //append so i can identify end of string at server
 
    /* loop{
         esp_println::println!("Reading data: {:.1} From sensor: {}", data.sensor_value, data.sensor_id); //placeholder
@@ -113,18 +111,18 @@ sta_socket.set_timeout(Some(embassy_time::Duration::from_secs(10)));
     } */
 
     let server_ip = Ipv4Address::new(192, 168, 2, 1);
-    let server_port = 8080;
-    let server_endpoint = IpEndpoint::new(server_ip.into(), server_port);
+    let server_port = 5050; //tcp port on server
+    let server_endpoint = IpEndpoint::new(server_ip.into(), server_port); //creates endpoint for connection
 
     loop {
         match sta_socket.connect(server_endpoint).await {
             Ok(_) => {
-                println!("✅ Connected to server!");
-                
+                println!("Connected to server at port {}", server_endpoint.port);
+                sta_socket.write_all(sendable.as_bytes()).await.ok(); //write strings to socket (.ok() is questionable but compiler wants it)
             }
             Err(e) => {
-                println!("❌ Connection failed: {:?}", e);
-                Timer::after(Duration::from_secs(5)).await; // ✅ Retry after delay
+                println!("Connection failed: {:?}", e);
+                Timer::after(Duration::from_secs(5)).await; // retry after delay
             }
         }
     }
@@ -135,6 +133,7 @@ async fn sta_task(mut runner: Runner<'static, WifiDevice<'static, WifiStaDevice>
     runner.run().await //mystery code
 }
 
+/* 
 //no task -> needs to be synchronous as this function must happen before net tasks
 async fn setup_wifi (ssid: String<32>, password: String<64>, mut wifi: WifiController<'static> ) { //static extends lifetime - compiler complains
      //Wifi configuration
@@ -175,7 +174,7 @@ async fn setup_wifi (ssid: String<32>, password: String<64>, mut wifi: WifiContr
     
     esp_println::println!("Connected" ); //boilerplate for checking connection
     
-} 
+} */
 
 #[esp_hal_embassy::main]
 async fn main(spawner: Spawner) { 
@@ -276,44 +275,9 @@ async fn main(spawner: Spawner) {
     Timer::after(Duration::from_secs(1)).await;
 }
 
-let mut sta_rx_buffer = [0; 1536];
-let mut sta_tx_buffer = [0; 1536];
 
 
-
-let mut sta_socket = TcpSocket::new(sta_stack, &mut sta_rx_buffer, &mut sta_tx_buffer);
-sta_socket.set_timeout(Some(embassy_time::Duration::from_secs(10)));
-
-
-    let data = SensorData { sensor_id: 50, sensor_value: 50.0}; //placeholder for reading current via i2c
-    //let jbuffer = [0u8; 1024]; //128 birs fine probably since struct is small note: couldnt get buffer to work so string instead
-    let sendable:String<128>  = serde_json_core::to_string(&data).unwrap(); //slice up data for transmission
-
-   /* loop{
-        esp_println::println!("Reading data: {:.1} From sensor: {}", data.sensor_value, data.sensor_id); //placeholder
-        esp_println::println!("Sending data...");
-        sta_socket.write_all(sendable.as_bytes()).await.ok(); //write all data to socket until end of buffer.len (not sure if ok() should be here)
-        Timer::after(Duration::from_millis(1000)).await; //return ctrl to executor
-    } */
-
-    let server_ip = Ipv4Address::new(192, 168, 2, 1);
-    let server_port = 8080;
-    let server_endpoint = IpEndpoint::new(server_ip.into(), server_port);
-
-    loop {
-        match sta_socket.connect(server_endpoint).await {
-            Ok(_) => {
-                println!("✅ Connected to server!");
-                
-            }
-            Err(e) => {
-                println!("❌ Connection failed: {:?}", e);
-                Timer::after(Duration::from_secs(5)).await; // ✅ Retry after delay
-            }
-        }
-    }
-
-    //spawner.spawn(read_send_current(sta_stack)).ok();
+    spawner.spawn(read_send_current(sta_stack)).ok();
 
 loop {
     Timer::after(Duration::from_secs(5)).await;
