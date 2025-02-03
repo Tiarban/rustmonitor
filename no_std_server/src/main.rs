@@ -15,7 +15,7 @@
 #![no_std]
 #![no_main]
 
-use core::{net::Ipv4Addr, str::FromStr};
+use core::{net::Ipv4Addr, str::FromStr, sync::atomic::{AtomicU32, Ordering}};
 
 use embassy_executor::Spawner;
 use embassy_net::{
@@ -45,6 +45,8 @@ use esp_wifi::{
     },
     EspWifiController,
 };
+
+static CLIENT_COUNT: AtomicU32 = AtomicU32::new(0); //keeps track of client number using static atomic variable
 
 // When you are okay with using a nightly compiler it's better to use https://docs.rs/static_cell/2.1.0/static_cell/macro.make_static.html
 macro_rules! mk_static {
@@ -109,6 +111,7 @@ async fn main(spawner: Spawner) -> ! {
     let mut rx_buffer = [0; 1536];
     let mut tx_buffer = [0; 1536];
 
+
     loop {
         if stack.is_link_up() {
             break;
@@ -126,22 +129,47 @@ async fn main(spawner: Spawner) -> ! {
         .config_v4()
         .inspect(|c| println!("ipv4 config: {c:?}"));
 
-    let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
+    let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer); //socket should handle http connections
     socket.set_timeout(Some(embassy_time::Duration::from_secs(10)));
+
+    let mut client_rx_buffer = [0;1536];
+    let mut client_tx_buffer = [0;1536];
+
+    let mut client_socket = TcpSocket::new(stack, &mut client_rx_buffer, &mut client_tx_buffer); //socket should handle client connections
+    client_socket.set_timeout(Some(embassy_time::Duration::from_secs(10)));
+
+
     loop {
-        println!("Wait for connection...");
+        println!("Waiting for GUI connection..."); //accept http requests from GUI
         let r = socket
             .accept(IpListenEndpoint {
                 addr: None,
                 port: 8080,
             })
             .await;
-        println!("Connected...");
+        println!("Connected to GUI...");
 
         if let Err(e) = r {
-            println!("connect error: {:?}", e);
+            println!("GUI connection error: {:?}", e);
             continue;
         }
+
+        println!("Waiting for client connection..."); //accept requests from client
+        let r = client_socket
+            .accept(IpListenEndpoint {
+                addr: None, //across all ip addresses
+                port: 5050,
+            })
+            .await;
+        println!("Connected to client...");
+        spawner.spawn(client_handler(client_socket));
+
+        if let Err(e) = r {
+            println!("Server connection error: {:?}", e);
+            continue;
+        }
+
+        
 
         use embedded_io_async::Write;
 
@@ -177,11 +205,11 @@ async fn main(spawner: Spawner) -> ! {
                 b"HTTP/1.0 200 OK\r\n\r\n\
             <html>\
                 <body>\
-                    <h1>imagine being hardstuck diamond 1 lmao</h1>\
+                    <h1>Server running succesfully!</h1>\
                 </body>\
             </html>\r\n\
             ",
-            ) //displays method on browser 
+            ) //displays method on browser
             .await;
         if let Err(e) = r {
             println!("write error: {:?}", e);
@@ -241,6 +269,39 @@ async fn run_dhcp(stack: Stack<'static>, gw_ip_addr: &'static str) {
 }
 
 #[embassy_executor::task]
+async fn client_handler(mut client_socket: TcpSocket<'static>){ //this task will read from the socket
+    let mut buffer = [0u8; 1024]; //same buffer as transmitted data
+    let mut pos = 0;
+    let shared_var = CLIENT_COUNT.load(Ordering::Relaxed); //load client count
+    CLIENT_COUNT.store(shared_var.wrapping_add(1), Ordering::Relaxed); //modify and store with relaxed ordering for now
+    loop{
+        match client_socket.read(&mut buffer).await {
+            Ok(0) => {
+                println!("read EOF"); //client is no longer streaming
+                break;
+            }
+            Ok(len) => {
+                let to_print =
+                    unsafe { core::str::from_utf8_unchecked(&buffer[..(pos + len)]) };
+
+                if to_print.contains("\r\n\r\n") {
+                    print!("{}", to_print);
+                    println!();
+                    pos = 0; //resets pos for next message as stream is constant
+                    break;
+            }
+            pos += len; //increment position by the current size if no end detected
+        }
+        Err(e) => {
+            println!("read error: {:?}", e);
+            break;
+        }
+    }
+}
+
+}
+
+#[embassy_executor::task]
 async fn connection(mut controller: WifiController<'static>) {
     println!("start connection task");
     println!("Device capabilities: {:?}", controller.capabilities());
@@ -268,5 +329,5 @@ async fn connection(mut controller: WifiController<'static>) {
 
 #[embassy_executor::task]
 async fn net_task(mut runner: Runner<'static, WifiDevice<'static, WifiApDevice>>) {
-    runner.run().await
+    runner.run().await //runs network stack
 }
