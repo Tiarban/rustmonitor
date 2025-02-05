@@ -46,7 +46,11 @@ use esp_wifi::{
     EspWifiController,
 };
 
+static MAX_CLIENTS: usize = 4; //maximum number of clients allowed - limits buffer pool
+
 static CLIENT_COUNT: AtomicU32 = AtomicU32::new(0); //keeps track of client number using static atomic variable
+static mut RX_CLIENT_BUFFER_POOL: [[u8; 1536]; MAX_CLIENTS] = [[0u8; 1536]; MAX_CLIENTS]; //using static pool instead of the mut array for buffers to get around lifetime issues when spawning clients *note u8 is the size of each element
+static mut TX_CLIENT_BUFFER_POOL: [[u8; 1536]; MAX_CLIENTS] = [[0u8; 1536]; MAX_CLIENTS]; //for tx
 
 // When you are okay with using a nightly compiler it's better to use https://docs.rs/static_cell/2.1.0/static_cell/macro.make_static.html
 macro_rules! mk_static {
@@ -132,12 +136,13 @@ async fn main(spawner: Spawner) -> ! {
     let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer); //socket should handle http connections
     socket.set_timeout(Some(embassy_time::Duration::from_secs(10)));
 
-    let mut client_rx_buffer = [0;1536];
-    let mut client_tx_buffer = [0;1536];
-
+    /* 
+    let mut client_rx_buffer = [0; 1536];
+    let mut client_tx_buffer = [0; 1536];
+    
     let mut client_socket = TcpSocket::new(stack, &mut client_rx_buffer, &mut client_tx_buffer); //socket should handle client connections
     client_socket.set_timeout(Some(embassy_time::Duration::from_secs(10)));
-
+*/
 
     loop {
         println!("Waiting for GUI connection..."); //accept http requests from GUI
@@ -154,6 +159,13 @@ async fn main(spawner: Spawner) -> ! {
             continue;
         }
 
+unsafe{ //static mutable variables arent safe but fine for now probably
+        println!("Building new tcp socket for client...");
+        let new_client_id: usize  = CLIENT_COUNT.load(Ordering::Relaxed).try_into().unwrap(); //load client count to represent the address of static buffer
+        let mut client_socket = TcpSocket::new(stack, &mut RX_CLIENT_BUFFER_POOL[new_client_id], &mut TX_CLIENT_BUFFER_POOL[new_client_id]);
+        client_socket.set_timeout(Some(embassy_time::Duration::from_secs(60)));
+
+
         println!("Waiting for client connection..."); //accept requests from client
         let r = client_socket
             .accept(IpListenEndpoint {
@@ -162,13 +174,27 @@ async fn main(spawner: Spawner) -> ! {
             })
             .await;
         println!("Connected to client...");
-        spawner.spawn(client_handler(client_socket));
+
+        if let Err(e) = r {
+            print!("Client connection error: {:?}", e);
+        }
+        spawner.spawn(client_handler(client_socket)).ok();
+        }
+        /*match client_socket.accept(IpListenEndpoint { //pattern matches the accepted return for error and for ok
+            addr: None,
+            port: 8080,
+        }).await {
+            Ok(mut comm_socket) => {
+                spawner.spawn(client_handler(comm_socket));
+            }
+            Err(e) => {println!("Failed to connect: {:?}", e)}
+        }
 
         if let Err(e) = r {
             println!("Server connection error: {:?}", e);
             continue;
         }
-
+            */
         
 
         use embedded_io_async::Write;
@@ -268,14 +294,20 @@ async fn run_dhcp(stack: Stack<'static>, gw_ip_addr: &'static str) {
     }
 }
 
+
 #[embassy_executor::task]
-async fn client_handler(mut client_socket: TcpSocket<'static>){ //this task will read from the socket
+async fn client_handler(mut client_socket: TcpSocket<'static>) { //this task will read from the socket
     let mut buffer = [0u8; 1024]; //same buffer as transmitted data
     let mut pos = 0;
-    let shared_var = CLIENT_COUNT.load(Ordering::Relaxed); //load client count
-    CLIENT_COUNT.store(shared_var.wrapping_add(1), Ordering::Relaxed); //modify and store with relaxed ordering for now
+    let current_count = CLIENT_COUNT.load(Ordering::Relaxed); //load client count
+    if current_count < MAX_CLIENTS.try_into().unwrap() {
+        CLIENT_COUNT.store(current_count.wrapping_add(1), Ordering::Relaxed); //modify and store with relaxed ordering for now
+    }
+    else {
+        print!("Warning: client pool at capacity.")
+    }
     loop{
-        match client_socket.read(&mut buffer).await {
+        match client_socket.read(&mut buffer).await { //match against buffer contents
             Ok(0) => {
                 println!("read EOF"); //client is no longer streaming
                 break;
@@ -287,7 +319,6 @@ async fn client_handler(mut client_socket: TcpSocket<'static>){ //this task will
                 if to_print.contains("\r\n\r\n") {
                     print!("{}", to_print);
                     println!();
-                    pos = 0; //resets pos for next message as stream is constant
                     break;
             }
             pos += len; //increment position by the current size if no end detected
@@ -296,9 +327,8 @@ async fn client_handler(mut client_socket: TcpSocket<'static>){ //this task will
             println!("read error: {:?}", e);
             break;
         }
+        }
     }
-}
-
 }
 
 #[embassy_executor::task]
