@@ -104,7 +104,7 @@ async fn main(spawner: Spawner) -> ! {
     let (stack, runner) = embassy_net::new(
         wifi_interface,
         config,
-        mk_static!(StackResources<3>, StackResources::<3>::new()),
+        mk_static!(StackResources<10>, StackResources::<10>::new()),
         seed,
     );
 
@@ -329,6 +329,17 @@ async fn client_handler(mut client_socket: TcpSocket<'static>) { //this task wil
         }
         }
     }
+
+    let r = client_socket.flush().await; //this block gracefully flushes and shuts down socket when break happens
+    if let Err(e) = r {
+        println!("flush error: {:?}", e);
+    }
+    Timer::after(Duration::from_millis(1000)).await;
+
+    client_socket.close();
+    Timer::after(Duration::from_millis(1000)).await;
+
+    client_socket.abort();
 }
 
 #[embassy_executor::task]
