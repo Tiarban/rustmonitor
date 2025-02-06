@@ -98,7 +98,7 @@ async fn read_send_current (sta_stack: Stack<'static>) { //for reading data
     sta_socket.set_timeout(Some(embassy_time::Duration::from_secs(10)));
 
 
-    let data = SensorData { sensor_id: 50, sensor_value: 50.0}; //placeholder for reading current via i2c
+    let data = SensorData { sensor_id: 10, sensor_value: 10.0}; //placeholder for reading current via i2c
     //let jbuffer = [0u8; 1024]; //128 birs fine probably since struct is small note: couldnt get buffer to work so string instead
     let mut sendable:String<128>  = serde_json_core::to_string(&data).unwrap(); //slice up data for transmission
     sendable.push_str("\r\n\r\n").unwrap(); //append so i can identify end of string at server
@@ -130,7 +130,7 @@ async fn read_send_current (sta_stack: Stack<'static>) { //for reading data
 
 #[embassy_executor::task]
 async fn sta_task(mut runner: Runner<'static, WifiDevice<'static, WifiStaDevice>>) {
-    runner.run().await //runs network stack
+    runner.run().await //mystery code
 }
 
 /* 
@@ -224,7 +224,7 @@ async fn main(spawner: Spawner) {
     dns_servers.push(Ipv4Address::new(8, 8, 8, 8)).unwrap();
 
     let sta_config = embassy_net::Config::ipv4_static(StaticConfigV4 {  //setting static ipv4 address since i couldnt get dhcp working in this context and i think itll be easier to identify the sensors
-        address: Ipv4Cidr::new(Ipv4Address::new(192, 168, 2, 10), 24), // ip for client
+        address: Ipv4Cidr::new(Ipv4Address::new(192, 168, 2, 15), 24), // ip for client
         gateway: Some(Ipv4Address::new(192, 168, 2, 1)), // ip for server router
         dns_servers, 
     });
