@@ -177,7 +177,7 @@ async fn setup_wifi (ssid: String<32>, password: String<64>, mut wifi: WifiContr
 } */
 
 #[esp_hal_embassy::main]
-async fn main(spawner: Spawner) { 
+async fn main(spawner: Spawner) {
 
     esp_println::logger::init_logger_from_env();
 
