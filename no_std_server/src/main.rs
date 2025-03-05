@@ -15,19 +15,14 @@
 #![no_std]
 #![no_main]
 
-use core::{net::Ipv4Addr, str::FromStr, sync::atomic::{AtomicU32, Ordering}};
+use core::{fmt, net::Ipv4Addr, str::FromStr, sync::atomic::{AtomicU32, Ordering}};
 
 use embassy_executor::Spawner;
 use embassy_net::{
-    tcp::TcpSocket,
-    IpListenEndpoint,
-    Ipv4Cidr,
-    Runner,
-    Stack,
-    StackResources,
-    StaticConfigV4,
+    tcp::TcpSocket, IpEndpoint, IpListenEndpoint, Ipv4Cidr, Runner, Stack, StackResources, StaticConfigV4
 };
 use embassy_time::{Duration, Timer};
+use embedded_io_async::Write;
 use esp_alloc as _;
 use esp_backtrace as _;
 use esp_hal::{clock::CpuClock, rng::Rng, timer::timg::TimerGroup};
@@ -45,12 +40,58 @@ use esp_wifi::{
     },
     EspWifiController,
 };
+use heapless::String;
+use core;
+use serde;
+use serde_json_core;
+use core::fmt::Write as writer; //write already defined in embeddedioasync
+
+
+//need to send this data so declaring serialisable
+#[derive(serde::Deserialize)] //makes the sensordata deserialisable for processing in handler
+struct SensorData { //struct for storing sensor id and data (id should be based on ip)
+    sensor_id: u8,
+    sensor_value: f32,
+}
+
+impl fmt::Display for SensorData {
+    // This trait requires `fmt` with this exact signature.
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        // Write strictly the first element into the supplied output
+        // stream: `f`. Returns `fmt::Result` which indicates whether the
+        // operation succeeded or failed. Note that `write!` uses syntax which
+        // is very similar to `println!`.
+        write!(f, "{} : {}", self.sensor_id, self.sensor_value)
+    }
+}
+
 
 static MAX_CLIENTS: usize = 4; //maximum number of clients allowed - limits buffer pool
 
 static CLIENT_COUNT: AtomicU32 = AtomicU32::new(0); //keeps track of client number using static atomic variable
 static mut RX_CLIENT_BUFFER_POOL: [[u8; 1536]; MAX_CLIENTS] = [[0u8; 1536]; MAX_CLIENTS]; //using static pool instead of the mut array for buffers to get around lifetime issues when spawning clients *note u8 is the size of each element
-static mut TX_CLIENT_BUFFER_POOL: [[u8; 1536]; MAX_CLIENTS] = [[0u8; 1536]; MAX_CLIENTS]; //for tx
+static mut TX_CLIENT_BUFFER_POOL: [[u8; 1536]; MAX_CLIENTS] = [[0u8; 1536]; MAX_CLIENTS]; //for client tx
+static mut RX_GUI_BUFFER: [u8; 1536] = [0u8;1536]; //for http
+static mut TX_GUI_BUFFER: [u8; 1536] = [0u8;1536];
+
+//declaring seperate static fields to store current data
+static mut DATA_10: SensorData = SensorData{
+    sensor_id: 0,
+    sensor_value: 0.0,
+};
+static mut DATA_15: SensorData = SensorData{
+    sensor_id: 0,
+    sensor_value: 0.0,
+};
+static mut DATA_20: SensorData = SensorData{
+    sensor_id: 0,
+    sensor_value: 0.0,
+};
+static mut DATA_25: SensorData = SensorData{
+    sensor_id: 0,
+    sensor_value: 0.0,
+};
+
 
 // When you are okay with using a nightly compiler it's better to use https://docs.rs/static_cell/2.1.0/static_cell/macro.make_static.html
 macro_rules! mk_static {
@@ -112,12 +153,12 @@ async fn main(spawner: Spawner) -> ! {
     spawner.spawn(net_task(runner)).ok();
     spawner.spawn(run_dhcp(stack, gw_ip_addr_str)).ok();
 
-    let mut rx_buffer = [0; 1536];
-    let mut tx_buffer = [0; 1536];
+    let mut _rx_buffer = [0; 1536];
+    let mut _tx_buffer = [0; 1536];
 
 
     loop {
-        if stack.is_link_up() {
+        if stack.is_link_up() { //checks if link is down, if down wait 500ms
             break;
         }
         Timer::after(Duration::from_millis(500)).await;
@@ -133,8 +174,11 @@ async fn main(spawner: Spawner) -> ! {
         .config_v4()
         .inspect(|c| println!("ipv4 config: {c:?}"));
 
-    let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer); //socket should handle http connections
+unsafe{  //static mutable variables arent safe but fine for now probably
+    let mut socket = TcpSocket::new(stack, &mut RX_GUI_BUFFER, &mut TX_GUI_BUFFER); //socket should handle http connections
     socket.set_timeout(Some(embassy_time::Duration::from_secs(10)));
+
+    spawner.spawn(gui_handler(socket)).ok();
 
     /* 
     let mut client_rx_buffer = [0; 1536];
@@ -145,26 +189,17 @@ async fn main(spawner: Spawner) -> ! {
 */
 
     loop {
-        println!("Waiting for GUI connection..."); //accept http requests from GUI
-        let r = socket
-            .accept(IpListenEndpoint {
-                addr: None,
-                port: 8080,
-            })
-            .await;
-        println!("Connected to GUI...");
 
-        if let Err(e) = r {
-            println!("GUI connection error: {:?}", e);
-            continue;
-        }
-
-unsafe{ //static mutable variables arent safe but fine for now probably
         println!("Building new tcp socket for client...");
         let new_client_id: usize  = CLIENT_COUNT.load(Ordering::Relaxed).try_into().unwrap(); //load client count to represent the address of static buffer
+        println!("Current client count: {}", new_client_id);
         let mut client_socket = TcpSocket::new(stack, &mut RX_CLIENT_BUFFER_POOL[new_client_id], &mut TX_CLIENT_BUFFER_POOL[new_client_id]);
         client_socket.set_timeout(Some(embassy_time::Duration::from_secs(60)));
 
+        //following moved from handler to here so after socket is made, increment is done immediatley
+        let current_count = CLIENT_COUNT.load(Ordering::Relaxed); //reload client count
+        CLIENT_COUNT.store(current_count.wrapping_add(1), Ordering::Relaxed); //modify and store with relaxed ordering for now
+        
 
         println!("Waiting for client connection..."); //accept requests from client
         let r = client_socket
@@ -173,12 +208,17 @@ unsafe{ //static mutable variables arent safe but fine for now probably
                 port: 5050,
             })
             .await;
-        println!("Connected to client...");
+        match r {
+            Ok(()) =>{
+                println!("Client handler spawned: {:?}", client_socket.remote_endpoint());
+                spawner.spawn(client_handler(client_socket)).ok();
+        },
+            Err(e) => println!("Client connection error: {:?}", e),
+        }
+
 
         if let Err(e) = r {
             print!("Client connection error: {:?}", e);
-        }
-        spawner.spawn(client_handler(client_socket)).ok();
         }
         /*match client_socket.accept(IpListenEndpoint { //pattern matches the accepted return for error and for ok
             addr: None,
@@ -195,62 +235,8 @@ unsafe{ //static mutable variables arent safe but fine for now probably
             continue;
         }
             */
-        
 
-        use embedded_io_async::Write;
-
-        let mut buffer = [0u8; 1024];
-        let mut pos = 0;
-        loop {
-            match socket.read(&mut buffer).await {
-                Ok(0) => {
-                    println!("read EOF");
-                    break;
-                }
-                Ok(len) => {
-                    let to_print =
-                        unsafe { core::str::from_utf8_unchecked(&buffer[..(pos + len)]) };
-
-                    if to_print.contains("\r\n\r\n") {
-                        print!("{}", to_print);
-                        println!();
-                        break;
-                    }
-
-                    pos += len;
-                }
-                Err(e) => {
-                    println!("read error: {:?}", e);
-                    break;
-                }
-            };
-        }
-
-        let r = socket
-            .write_all( 
-                b"HTTP/1.0 200 OK\r\n\r\n\
-            <html>\
-                <body>\
-                    <h1>Server running succesfully!</h1>\
-                </body>\
-            </html>\r\n\
-            ",
-            ) //displays method on browser
-            .await;
-        if let Err(e) = r {
-            println!("write error: {:?}", e);
-        }
-
-        let r = socket.flush().await;
-        if let Err(e) = r {
-            println!("flush error: {:?}", e);
-        }
-        Timer::after(Duration::from_millis(1000)).await;
-
-        socket.close();
-        Timer::after(Duration::from_millis(1000)).await;
-
-        socket.abort();
+    }
     }
 }
 
@@ -294,38 +280,150 @@ async fn run_dhcp(stack: Stack<'static>, gw_ip_addr: &'static str) {
     }
 }
 
-
 #[embassy_executor::task]
+async fn gui_handler(mut socket: TcpSocket<'static>) { //super unsure about this stuff, but it should only connect once and continously read, not exiting
+loop { //first loop checks connection, inner loop reads until done.
+        println!("Waiting for GUI connection..."); //accept http requests from GUI
+        let r = socket
+            .accept(IpListenEndpoint {
+                addr: None,
+                port: 8080,
+            })
+            .await;
+        println!("Connected to GUI...");
+
+        if let Err(e) = r {
+            println!("GUI connection error: {:?}", e);
+        }
+
+        //use embedded_io_async::Write;
+
+        let mut buffer = [0u8; 1024];
+        let mut pos = 0;
+        loop {
+            match socket.read(&mut buffer).await {
+                Ok(0) => {
+                    println!("read EOF");
+                    break; //used to be break, but i dont want to shut socket down at EOF
+                }
+                Ok(len) => {
+                    let to_print =
+                        unsafe { core::str::from_utf8_unchecked(&buffer[..(pos + len)]) };
+    
+                    if to_print.contains("\r\n\r\n") {
+                        print!("{}", to_print);
+                        println!();
+                        break; 
+                    }
+                    pos += len;
+                }
+                Err(e) => {
+                    println!("read error: {:?}", e);
+                    break;
+                }
+            }
+        }
+        unsafe {
+            let mut webpage: String<512> = String::new(); //need to use strings constructor, not different string val
+            write!( webpage,
+                "HTTP/1.0 200 OK\r\n\r\n\
+            <html>\
+                <body>\
+                    <h1>Server running succesfully!</h1>\
+                    <p>{}</p>\
+                    <p>{}</p>\
+                    <p>{}</p>\
+                    <p>{}</p>\
+                </body>\
+            </html>\r\n\
+            ",
+            DATA_10,
+            DATA_15,
+            DATA_20,
+            DATA_25,
+            //put data here
+            ).unwrap();
+            //following code handles posting to http socket. unnecessary for now but needed for transmitting to GUI");
+            let r = socket 
+                .write_all(
+                    webpage.as_bytes()) //displays method on browser
+                .await;
+            if let Err(e) = r {
+                println!("write error: {:?}", e);
+            }
+        }
+        let r = socket.flush().await;
+                    if let Err(e) = r {
+            println!("flush error: {:?}", e);
+        }
+        Timer::after(Duration::from_millis(1000)).await;
+
+        socket.close();
+        Timer::after(Duration::from_millis(1000)).await;
+
+        socket.abort();
+    
+}
+}
+
+#[embassy_executor::task(pool_size = MAX_CLIENTS)]
 async fn client_handler(mut client_socket: TcpSocket<'static>) { //this task will read from the socket
-    let mut buffer = [0u8; 1024]; //same buffer as transmitted data
+    let mut buffer = [0u8; 1024]; //same buffer size as transmitted data
     let mut pos = 0;
-    let current_count = CLIENT_COUNT.load(Ordering::Relaxed); //load client count
-    if current_count < MAX_CLIENTS.try_into().unwrap() {
-        CLIENT_COUNT.store(current_count.wrapping_add(1), Ordering::Relaxed); //modify and store with relaxed ordering for now
-    }
-    else {
-        print!("Warning: client pool at capacity.")
-    }
+    let mut handle = SensorData {sensor_id: 0, sensor_value: 0.0}; //temp for storage of recieved values
     loop{
         match client_socket.read(&mut buffer).await { //match against buffer contents
             Ok(0) => {
                 println!("read EOF"); //client is no longer streaming
-                break;
+                break; //maybe should be break, continue for now
             }
             Ok(len) => {
                 let to_print =
                     unsafe { core::str::from_utf8_unchecked(&buffer[..(pos + len)]) };
 
                 if to_print.contains("\r\n\r\n") {
-                    print!("{}", to_print);
-                    println!();
-                    break;
+                    let parts = to_print.split("\r\n\r\n"); //splits based on delimiter
+                    for part in parts {
+                        let temp = part.trim(); //trimes whitespace \r\n\r\n
+                        match serde_json_core::from_str::<SensorData>(temp){
+                            Ok((recieved,_)) => {
+                                println!("Data succesfuly parsed: {}", recieved);
+                                handle.sensor_id = recieved.sensor_id;
+                                handle.sensor_value = recieved.sensor_value;
+                            } //becuase it expects (Sensordata, usize)
+                            Err(e) => {println!("Parsing Error: {:?}", e)}
+                        }
+                    }
+                    //print!("{}", to_print); //hopefully unnecessary...
+                    unsafe{ //messing with static muts requires unsafe code
+                        match client_socket.remote_endpoint() {
+                            Some(IpEndpoint {port: _, addr}) if addr == embassy_net::IpAddress::Ipv4(Ipv4Addr::new(192, 168, 2, 10)) => {
+                                DATA_10.sensor_id = handle.sensor_id;
+                                DATA_10.sensor_value = handle.sensor_value;
+                            }
+                            Some(IpEndpoint {port: _, addr}) if addr == embassy_net::IpAddress::Ipv4(Ipv4Addr::new(192, 168, 2, 15)) => {
+                                DATA_15.sensor_id = handle.sensor_id;
+                                DATA_15.sensor_value = handle.sensor_value;
+                            }
+                            Some(IpEndpoint {port: _, addr}) if addr == embassy_net::IpAddress::Ipv4(Ipv4Addr::new(192, 168, 2, 20)) => {
+                                DATA_20.sensor_id = handle.sensor_id;
+                                DATA_20.sensor_value = handle.sensor_value;
+                            }
+                            Some(IpEndpoint {port: _, addr}) if addr == embassy_net::IpAddress::Ipv4(Ipv4Addr::new(192, 168, 2, 25)) => {
+                                DATA_25.sensor_id = handle.sensor_id;
+                                DATA_25.sensor_value = handle.sensor_value;
+                            }
+                            _=> {}
+                        }
+                    }
+                    pos = 0; //reset position at delimiter detection
+                    continue; //used to be break, but i dont want to shut socket down when receiving delimiter expression, continue reading
             }
             pos += len; //increment position by the current size if no end detected
         }
         Err(e) => {
             println!("read error: {:?}", e);
-            break;
+            break; //break only on error
         }
         }
     }
@@ -335,6 +433,9 @@ async fn client_handler(mut client_socket: TcpSocket<'static>) { //this task wil
         println!("flush error: {:?}", e);
     }
     Timer::after(Duration::from_millis(1000)).await;
+
+    let current_count_post = CLIENT_COUNT.load(Ordering::Relaxed);
+    CLIENT_COUNT.store(current_count_post.wrapping_sub(1), Ordering::Relaxed); //frees up a buffer used when created 
 
     client_socket.close();
     Timer::after(Duration::from_millis(1000)).await;
