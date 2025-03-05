@@ -97,12 +97,6 @@ async fn read_send_current (sta_stack: Stack<'static>) { //for reading data
     let mut sta_socket = TcpSocket::new(sta_stack, &mut sta_rx_buffer, &mut sta_tx_buffer);
     sta_socket.set_timeout(Some(embassy_time::Duration::from_secs(10)));
 
-
-    let data = SensorData { sensor_id: 50, sensor_value: 50.0}; //placeholder for reading current via i2c
-    //let jbuffer = [0u8; 1024]; //128 birs fine probably since struct is small note: couldnt get buffer to work so string instead
-    let mut sendable:String<128>  = serde_json_core::to_string(&data).unwrap(); //slice up data for transmission
-    sendable.push_str("\r\n\r\n").unwrap(); //append so i can identify end of string at server
-
    /* loop{
         esp_println::println!("Reading data: {:.1} From sensor: {}", data.sensor_value, data.sensor_id); //placeholder
         esp_println::println!("Sending data...");
@@ -114,11 +108,11 @@ async fn read_send_current (sta_stack: Stack<'static>) { //for reading data
     let server_port = 5050; //tcp port on server
     let server_endpoint = IpEndpoint::new(server_ip.into(), server_port); //creates endpoint for connection
 
-    loop {
+    loop { //connect to socket
         match sta_socket.connect(server_endpoint).await {
             Ok(_) => {
                 println!("Connected to server at port {}", server_endpoint.port);
-                sta_socket.write_all(sendable.as_bytes()).await.ok(); //write strings to socket (.ok() is questionable but compiler wants it)
+                break;
             }
             Err(e) => {
                 println!("Connection failed: {:?}", e);
@@ -126,7 +120,16 @@ async fn read_send_current (sta_stack: Stack<'static>) { //for reading data
             }
         }
     }
+
+    loop { //send data loop, also moved data declaration here so it can be updated within the loop - static maybe?
+        let data = SensorData { sensor_id: 50, sensor_value: 50.0}; //placeholder for reading current via i2c
+        //let jbuffer = [0u8; 1024]; //128 birs fine probably since struct is small note: couldnt get buffer to work so string instead
+        let mut sendable:String<128>  = serde_json_core::to_string(&data).unwrap(); //slice up data for transmission
+        sendable.push_str("\r\n\r\n").unwrap(); //append so i can identify end of string at server
+        sta_socket.write_all(sendable.as_bytes()).await.ok(); //write strings to socket (.ok() is questionable but compiler wants it)
+    }
 }
+
 
 #[embassy_executor::task]
 async fn sta_task(mut runner: Runner<'static, WifiDevice<'static, WifiStaDevice>>) {
