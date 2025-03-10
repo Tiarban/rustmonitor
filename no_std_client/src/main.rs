@@ -55,7 +55,7 @@ use embassy_net::{ //provides stack for tcp stuff etc. for communcation, not con
     tcp::TcpSocket, IpEndpoint, Ipv4Cidr, Runner, Stack, StackResources, StaticConfigV4
 };
 use esp_alloc as _;
-use esp_hal::{clock::CpuClock, rng::Rng, timer::timg::TimerGroup};
+use esp_hal::{clock::CpuClock, gpio::{self, Io, Pin}, i2c::{self, master::{Config, I2c}}, peripheral::{self, Peripheral}, peripherals::{self, Peripherals, I2C0, IO_MUX}, rng::Rng, timer::timg::TimerGroup, Blocking};
 use esp_println::println;
 use esp_wifi::{ //just for connection, embassy-net handles communication stuff in the stack
     init,
@@ -71,6 +71,7 @@ use smoltcp::wire::Ipv4Address;
 use serde_json_core;
 
 use embedded_io_async::Write;
+use ads1x1x::{channel::{self, SingleA0}, Ads1x1x, FullScaleRange, TargetAddr};
 
 
 macro_rules! mk_static { //alternative to normal static cell for persistent storage (like nvs from esp-idf-svc) safer than static
@@ -81,14 +82,25 @@ macro_rules! mk_static { //alternative to normal static cell for persistent stor
         x
     }};
 }
-#[derive(serde::Serialize)] //need to send this data so declaring serialisable 
+#[derive(serde::Serialize)] //need to send this data so declaring serialisable
 struct SensorData { //struct for storing sensor id and data (id should be based on ip)
     sensor_id: u8,
     sensor_value: f32,
 }
 
 #[embassy_executor::task]
-async fn read_send_current (sta_stack: Stack<'static>) { //for reading data
+async fn read_send_current (sta_stack: Stack<'static>, peripherals: I2C0) { //for reading data
+    
+    let sda: gpio::GpioPin<0> = unsafe {gpio::GpioPin::steal()}; //bypass the ownership way to get the pins
+    let scl: gpio::GpioPin<1> = unsafe {gpio::GpioPin::steal()};
+
+    let my_i2c = I2c::new(peripherals, Config::default())
+    .unwrap().with_sda(sda).with_scl(scl);
+    let mut adc_i2c = Ads1x1x::new_ads1115(my_i2c, TargetAddr::Gnd); //declares the ads object with the i2c
+    adc_i2c.set_data_rate(ads1x1x::DataRate16Bit::Sps860).unwrap(); //sets data rate at 860 samples per second
+    adc_i2c.set_full_scale_range(FullScaleRange::Within4_096V).unwrap(); //full scale range gets the voltage for +- 4096V
+
+
     let mut sta_rx_buffer = [0; 1536];
     let mut sta_tx_buffer = [0; 1536];
 
@@ -122,7 +134,9 @@ async fn read_send_current (sta_stack: Stack<'static>) { //for reading data
     }
 
     loop { //send data loop, also moved data declaration here so it can be updated within the loop - static maybe?
-        let data = SensorData { sensor_id: 50, sensor_value: 50.0}; //placeholder for reading current via i2c
+        let raw_data = adc_i2c.read(SingleA0).unwrap(); //reads on channel a0 on adc
+        let voltage = (raw_data as f32/32767.0)*4096.0;
+        let data = SensorData { sensor_id: 50, sensor_value: voltage}; //placeholder for reading current via i2c
         //let jbuffer = [0u8; 1024]; //128 birs fine probably since struct is small note: couldnt get buffer to work so string instead
         let mut sendable:String<128>  = serde_json_core::to_string(&data).unwrap(); //slice up data for transmission
         sendable.push_str("\r\n\r\n").unwrap(); //append so i can identify end of string at server
@@ -187,6 +201,7 @@ async fn main(spawner: Spawner) {
     esp_println::println!("Init!");
 
     //handles:
+    //wifi stuff
 
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max()); //sets clock to max clock speed
     let peripherals = esp_hal::init(config);//get peripheral using esp_hal abstraction
@@ -199,7 +214,15 @@ async fn main(spawner: Spawner) {
         esp_hal_embassy::init(timg1.timer0);
 
     let mut rng = Rng::new(peripherals.RNG); // random number generation for dhcp and initialisation of controller
+    
+    //i2c stuff
+    //let io = Io::new(peripherals.IO_MUX); i think this is the safe way but cant get it to work
+    let per_pins = peripherals.I2C0;
 
+        //and Gnd as the adress -> since we only have one channel its fine
+
+
+    //wifi stuff
     let init = &*mk_static!(
         EspWifiController<'static>,
         init(timg0.timer0, rng.clone(), peripherals.RADIO_CLK).unwrap() //switched rng.clone to into, not sure the consequences
@@ -278,9 +301,9 @@ async fn main(spawner: Spawner) {
     Timer::after(Duration::from_secs(1)).await;
 }
 
+    
 
-
-    spawner.spawn(read_send_current(sta_stack)).ok();
+    spawner.spawn(read_send_current(sta_stack, per_pins)).ok();
 
 loop {
     Timer::after(Duration::from_secs(5)).await;

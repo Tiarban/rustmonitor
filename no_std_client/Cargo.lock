@@ -3,6 +3,16 @@
 version = 4
 
 [[package]]
+name = "ads1x1x"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4c907ad7732d7d83dafc84f0d9a0909072e86137de28aa97beeb421ef8b648c6"
+dependencies = [
+ "embedded-hal 1.0.0",
+ "nb 1.1.0",
+]
+
+[[package]]
 name = "anyhow"
 version = "1.0.95"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -797,6 +807,7 @@ checksum = "8d5439c4ad607c3c23abf66de8c8bf57ba8adcd1f129e699851a6e43935d339d"
 name = "no_std_client"
 version = "0.1.0"
 dependencies = [
+ "ads1x1x",
  "embassy-executor",
  "embassy-net",
  "embassy-time",

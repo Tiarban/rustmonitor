@@ -28,6 +28,7 @@ static_cell = "2.1.0"
 serde-json-core = "0.6.0"
 serde = {version = "1.0.217", default-features = false }
 embedded-io-async = "0.6.1"
+ads1x1x = "0.3.0"
 
 [profile.dev]
 # Rust debug is too slow.

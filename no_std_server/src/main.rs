@@ -366,7 +366,7 @@ loop { //first loop checks connection, inner loop reads until done.
 }
 }
 
-#[embassy_executor::task(pool_size = MAX_CLIENTS)]
+#[embassy_executor::task(pool_size = MAX_CLIENTS)] //ties the max instances to client size from pool
 async fn client_handler(mut client_socket: TcpSocket<'static>) { //this task will read from the socket
     let mut buffer = [0u8; 1024]; //same buffer size as transmitted data
     let mut pos = 0;
