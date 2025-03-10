@@ -136,7 +136,7 @@ async fn read_send_current (sta_stack: Stack<'static>, peripherals: I2C0) { //fo
     loop { //send data loop, also moved data declaration here so it can be updated within the loop - static maybe?
         let raw_data = adc_i2c.read(SingleA0).unwrap(); //reads on channel a0 on adc
         let voltage = (raw_data as f32/32767.0)*4096.0;
-        let data = SensorData { sensor_id: 50, sensor_value: voltage}; //placeholder for reading current via i2c
+        let data = SensorData { sensor_id: 10, sensor_value: voltage}; //placeholder for reading current via i2c
         //let jbuffer = [0u8; 1024]; //128 birs fine probably since struct is small note: couldnt get buffer to work so string instead
         let mut sendable:String<128>  = serde_json_core::to_string(&data).unwrap(); //slice up data for transmission
         sendable.push_str("\r\n\r\n").unwrap(); //append so i can identify end of string at server
