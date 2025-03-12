@@ -1,0 +1,3 @@
+jinja2
+pkginfo
+tqdm
