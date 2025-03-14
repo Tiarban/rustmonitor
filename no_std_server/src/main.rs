@@ -15,13 +15,14 @@
 #![no_std]
 #![no_main]
 
-use core::{fmt, net::Ipv4Addr, str::FromStr, sync::atomic::{AtomicU32, Ordering}};
+use core::{default, fmt, net::Ipv4Addr, str::FromStr, sync::atomic::{AtomicU32, Ordering}};
 
 use embassy_executor::Spawner;
 use embassy_net::{
     tcp::TcpSocket, IpEndpoint, IpListenEndpoint, Ipv4Cidr, Runner, Stack, StackResources, StaticConfigV4
 };
-use embassy_time::{Duration, Timer};
+use embassy_time::{Duration, Timer, Instant};
+//use embassy_sync::lazy_lock;
 use embedded_io_async::Write;
 use esp_alloc as _;
 use esp_backtrace as _;
@@ -45,6 +46,8 @@ use core;
 use serde;
 use serde_json_core;
 use core::fmt::Write as writer; //write already defined in embeddedioasync
+use circular_buffer::CircularBuffer;
+
 
 
 //need to send this data so declaring serialisable
@@ -52,6 +55,26 @@ use core::fmt::Write as writer; //write already defined in embeddedioasync
 struct SensorData { //struct for storing sensor id and data (id should be based on ip)
     sensor_id: u8,
     sensor_value: f32,
+}
+//using embassy time to get the time of the reading relative to boot from Instant
+#[derive(Copy, Clone, serde::Serialize)] //copy and clone needed for default values to be copied for affys 
+struct TimedSensorData {
+    sensor_id: u8,
+    sensor_value: f32,
+    sensor_time: u64,
+}
+
+#[derive(serde::Serialize, Clone, Copy)]
+struct ClientReadings {
+    readings: [TimedSensorData; 32],
+}
+
+#[derive(serde::Serialize)]
+struct TotalClientReadings { //this allows me to seriailse all into one json object
+    client1: ClientReadings,
+    client2: ClientReadings,
+    client3: ClientReadings,
+    client4: ClientReadings,
 }
 
 impl fmt::Display for SensorData {
@@ -65,6 +88,34 @@ impl fmt::Display for SensorData {
     }
 }
 
+impl Default for TimedSensorData { //to generate default values
+    fn default() -> Self {
+        TimedSensorData {
+            sensor_id: 0,
+            sensor_value: 0.0,
+            sensor_time: 0,
+        }
+    }
+}
+
+impl Default for ClientReadings { //generates default values using timedsensordata default
+    fn default() -> Self {
+        ClientReadings {
+            readings: [TimedSensorData::default(); 32]
+        }
+    }
+}
+//following two consts declared manually rather than using default
+const TIMED_SENSOR_DATA_DEFAULT: TimedSensorData = TimedSensorData{
+    sensor_id: 0,
+    sensor_time: 0,
+    sensor_value: 0.0,
+};
+
+const CLIENT_READINGS_DEFAULT: ClientReadings = ClientReadings{
+    readings: [TIMED_SENSOR_DATA_DEFAULT; 32]
+};
+
 
 static MAX_CLIENTS: usize = 4; //maximum number of clients allowed - limits buffer pool
 
@@ -75,23 +126,24 @@ static mut RX_GUI_BUFFER: [u8; 1536] = [0u8;1536]; //for http
 static mut TX_GUI_BUFFER: [u8; 1536] = [0u8;1536];
 
 //declaring seperate static fields to store current data
-static mut DATA_10: SensorData = SensorData{
-    sensor_id: 0,
-    sensor_value: 0.0,
-};
-static mut DATA_15: SensorData = SensorData{
-    sensor_id: 0,
-    sensor_value: 0.0,
-};
-static mut DATA_20: SensorData = SensorData{
-    sensor_id: 0,
-    sensor_value: 0.0,
-};
-static mut DATA_25: SensorData = SensorData{
-    sensor_id: 0,
-    sensor_value: 0.0,
-};
 
+static mut DATA_10: ClientReadings = CLIENT_READINGS_DEFAULT;
+static mut DATA_15: ClientReadings = CLIENT_READINGS_DEFAULT;
+static mut DATA_20: ClientReadings = CLIENT_READINGS_DEFAULT;
+static mut DATA_25: ClientReadings = CLIENT_READINGS_DEFAULT;
+
+static mut BUF_10: CircularBuffer<32, TimedSensorData> = CircularBuffer::<32, TimedSensorData>::new();
+static mut BUF_15: CircularBuffer<32, TimedSensorData> = CircularBuffer::<32, TimedSensorData>::new();
+static mut BUF_20: CircularBuffer<32, TimedSensorData> = CircularBuffer::<32, TimedSensorData>::new();
+static mut BUF_25: CircularBuffer<32, TimedSensorData> = CircularBuffer::<32, TimedSensorData>::new();
+
+fn circ_to_readings(buf: &CircularBuffer<32, TimedSensorData>, output: &mut ClientReadings) {//&mut since it has to alter the real output
+    let mut i = 0;
+    for elem in buf.iter() {
+        output.readings[i] = *elem;
+        i+=1;
+    }
+}
 
 // When you are okay with using a nightly compiler it's better to use https://docs.rs/static_cell/2.1.0/static_cell/macro.make_static.html
 macro_rules! mk_static {
@@ -324,23 +376,21 @@ loop { //first loop checks connection, inner loop reads until done.
             }
         }
         unsafe {
-            let mut webpage: String<512> = String::new(); //need to use strings constructor, not different string val
+            circ_to_readings(&BUF_10, &mut DATA_10);
+            circ_to_readings(&BUF_15, &mut DATA_15);
+            circ_to_readings(&BUF_20, &mut DATA_20);
+            circ_to_readings(&BUF_25, &mut DATA_25);
+            let totalreadings: TotalClientReadings = TotalClientReadings {
+                client1: DATA_10,
+                client2: DATA_15,
+                client3: DATA_20,
+                client4: DATA_25,
+            };
+            let jsonpayload:String<4096>  = serde_json_core::to_string(&totalreadings).unwrap();
+            let mut webpage: String<20000> = String::new(); //need to use strings constructor, not different string val
             write!( webpage,
-                "HTTP/1.0 200 OK\r\n\r\n\
-            <html>\
-                <body>\
-                    <h1>Server running succesfully!</h1>\
-                    <p>{}</p>\
-                    <p>{}</p>\
-                    <p>{}</p>\
-                    <p>{}</p>\
-                </body>\
-            </html>\r\n\
-            ",
-            DATA_10,
-            DATA_15,
-            DATA_20,
-            DATA_25,
+                "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n\r\n{}",
+            jsonpayload,
             //put data here
             ).unwrap();
             //following code handles posting to http socket. unnecessary for now but needed for transmitting to GUI");
@@ -370,7 +420,7 @@ loop { //first loop checks connection, inner loop reads until done.
 async fn client_handler(mut client_socket: TcpSocket<'static>) { //this task will read from the socket
     let mut buffer = [0u8; 1024]; //same buffer size as transmitted data
     let mut pos = 0;
-    let mut handle = SensorData {sensor_id: 0, sensor_value: 0.0}; //temp for storage of recieved values
+    let mut handle = TimedSensorData {sensor_id: 0, sensor_value: 0.0, sensor_time:0}; //temp for storage of recieved values
     loop{
         match client_socket.read(&mut buffer).await { //match against buffer contents
             Ok(0) => {
@@ -390,6 +440,7 @@ async fn client_handler(mut client_socket: TcpSocket<'static>) { //this task wil
                                 println!("Data succesfuly parsed: {}", recieved);
                                 handle.sensor_id = recieved.sensor_id;
                                 handle.sensor_value = recieved.sensor_value;
+                                handle.sensor_time = Instant::now().as_millis();
                             } //becuase it expects (Sensordata, usize)
                             Err(e) => {println!("Parsing Error: {:?}", e)}
                         }
@@ -398,20 +449,16 @@ async fn client_handler(mut client_socket: TcpSocket<'static>) { //this task wil
                     unsafe{ //messing with static muts requires unsafe code
                         match client_socket.remote_endpoint() {
                             Some(IpEndpoint {port: _, addr}) if addr == embassy_net::IpAddress::Ipv4(Ipv4Addr::new(192, 168, 2, 10)) => {
-                                DATA_10.sensor_id = handle.sensor_id;
-                                DATA_10.sensor_value = handle.sensor_value;
+                                BUF_10.push_back(handle);
                             }
                             Some(IpEndpoint {port: _, addr}) if addr == embassy_net::IpAddress::Ipv4(Ipv4Addr::new(192, 168, 2, 15)) => {
-                                DATA_15.sensor_id = handle.sensor_id;
-                                DATA_15.sensor_value = handle.sensor_value;
+                                BUF_15.push_back(handle);
                             }
                             Some(IpEndpoint {port: _, addr}) if addr == embassy_net::IpAddress::Ipv4(Ipv4Addr::new(192, 168, 2, 20)) => {
-                                DATA_20.sensor_id = handle.sensor_id;
-                                DATA_20.sensor_value = handle.sensor_value;
+                                BUF_20.push_back(handle);
                             }
                             Some(IpEndpoint {port: _, addr}) if addr == embassy_net::IpAddress::Ipv4(Ipv4Addr::new(192, 168, 2, 25)) => {
-                                DATA_25.sensor_id = handle.sensor_id;
-                                DATA_25.sensor_value = handle.sensor_value;
+                                BUF_25.push_back(handle);
                             }
                             _=> {}
                         }

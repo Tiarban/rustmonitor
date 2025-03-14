@@ -32,6 +32,8 @@ edge-nal-embassy = "0.5.0"
 edge-nal = "0.5.0"
 serde-json-core = "0.6.0"
 serde = {version = "1.0.217", default-features = false }
+embassy-sync = "0.6.2"
+circular-buffer = { version = "1.1.0", default-features = false, features = ["alloc"] }
 
 [profile.dev]
 # Rust debug is too slow.
