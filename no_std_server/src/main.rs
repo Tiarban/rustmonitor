@@ -66,7 +66,7 @@ struct TimedSensorData {
 
 #[derive(serde::Serialize, Clone, Copy)]
 struct ClientReadings {
-    readings: [TimedSensorData; 32],
+    readings: [TimedSensorData; 8],
 }
 
 #[derive(serde::Serialize)]
@@ -101,7 +101,7 @@ impl Default for TimedSensorData { //to generate default values
 impl Default for ClientReadings { //generates default values using timedsensordata default
     fn default() -> Self {
         ClientReadings {
-            readings: [TimedSensorData::default(); 32]
+            readings: [TimedSensorData::default(); 8]
         }
     }
 }
@@ -113,7 +113,7 @@ const TIMED_SENSOR_DATA_DEFAULT: TimedSensorData = TimedSensorData{
 };
 
 const CLIENT_READINGS_DEFAULT: ClientReadings = ClientReadings{
-    readings: [TIMED_SENSOR_DATA_DEFAULT; 32]
+    readings: [TIMED_SENSOR_DATA_DEFAULT; 8]
 };
 
 
@@ -132,18 +132,11 @@ static mut DATA_15: ClientReadings = CLIENT_READINGS_DEFAULT;
 static mut DATA_20: ClientReadings = CLIENT_READINGS_DEFAULT;
 static mut DATA_25: ClientReadings = CLIENT_READINGS_DEFAULT;
 
-static mut BUF_10: CircularBuffer<32, TimedSensorData> = CircularBuffer::<32, TimedSensorData>::new();
-static mut BUF_15: CircularBuffer<32, TimedSensorData> = CircularBuffer::<32, TimedSensorData>::new();
-static mut BUF_20: CircularBuffer<32, TimedSensorData> = CircularBuffer::<32, TimedSensorData>::new();
-static mut BUF_25: CircularBuffer<32, TimedSensorData> = CircularBuffer::<32, TimedSensorData>::new();
+static mut BUF_10: CircularBuffer<8, TimedSensorData> = CircularBuffer::<8, TimedSensorData>::new();
+static mut BUF_15: CircularBuffer<8, TimedSensorData> = CircularBuffer::<8, TimedSensorData>::new();
+static mut BUF_20: CircularBuffer<8, TimedSensorData> = CircularBuffer::<8, TimedSensorData>::new();
+static mut BUF_25: CircularBuffer<8, TimedSensorData> = CircularBuffer::<8, TimedSensorData>::new();
 
-fn circ_to_readings(buf: &CircularBuffer<32, TimedSensorData>, output: &mut ClientReadings) {//&mut since it has to alter the real output
-    let mut i = 0;
-    for elem in buf.iter() {
-        output.readings[i] = *elem;
-        i+=1;
-    }
-}
 
 // When you are okay with using a nightly compiler it's better to use https://docs.rs/static_cell/2.1.0/static_cell/macro.make_static.html
 macro_rules! mk_static {
@@ -197,7 +190,7 @@ async fn main(spawner: Spawner) -> ! {
     let (stack, runner) = embassy_net::new(
         wifi_interface,
         config,
-        mk_static!(StackResources<5>, StackResources::<5>::new()),
+        mk_static!(StackResources<7>, StackResources::<7>::new()),
         seed,
     );
 
@@ -376,18 +369,20 @@ loop { //first loop checks connection, inner loop reads until done.
             }
         }
         unsafe {
+            /*
             circ_to_readings(&BUF_10, &mut DATA_10);
             circ_to_readings(&BUF_15, &mut DATA_15);
             circ_to_readings(&BUF_20, &mut DATA_20);
             circ_to_readings(&BUF_25, &mut DATA_25);
+            */
             let totalreadings: TotalClientReadings = TotalClientReadings {
                 client1: DATA_10,
                 client2: DATA_15,
                 client3: DATA_20,
                 client4: DATA_25,
             };
-            let jsonpayload:String<4096>  = serde_json_core::to_string(&totalreadings).unwrap();
-            let mut webpage: String<20000> = String::new(); //need to use strings constructor, not different string val
+            let jsonpayload:String<2000>  = serde_json_core::to_string(&totalreadings).unwrap();
+            let mut webpage: String<9000> = String::new(); //need to use strings constructor, not different string val
             write!( webpage,
                 "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n\r\n{}",
             jsonpayload,
@@ -421,6 +416,14 @@ async fn client_handler(mut client_socket: TcpSocket<'static>) { //this task wil
     let mut buffer = [0u8; 1024]; //same buffer size as transmitted data
     let mut pos = 0;
     let mut handle = TimedSensorData {sensor_id: 0, sensor_value: 0.0, sensor_time:0}; //temp for storage of recieved values
+    fn circ_to_readings(buf: &CircularBuffer<8, TimedSensorData>, output: &mut ClientReadings) {//&mut since it has to alter the real output
+        let mut i = 0;
+        for elem in buf.iter() {
+            output.readings[i] = *elem;
+            i+=1;
+        }
+    }
+    
     loop{
         match client_socket.read(&mut buffer).await { //match against buffer contents
             Ok(0) => {
@@ -441,6 +444,7 @@ async fn client_handler(mut client_socket: TcpSocket<'static>) { //this task wil
                                 handle.sensor_id = recieved.sensor_id;
                                 handle.sensor_value = recieved.sensor_value;
                                 handle.sensor_time = Instant::now().as_millis();
+                                print!("{}", handle.sensor_time)
                             } //becuase it expects (Sensordata, usize)
                             Err(e) => {println!("Parsing Error: {:?}", e)}
                         }
@@ -450,15 +454,20 @@ async fn client_handler(mut client_socket: TcpSocket<'static>) { //this task wil
                         match client_socket.remote_endpoint() {
                             Some(IpEndpoint {port: _, addr}) if addr == embassy_net::IpAddress::Ipv4(Ipv4Addr::new(192, 168, 2, 10)) => {
                                 BUF_10.push_back(handle);
+                                circ_to_readings(&BUF_10, &mut DATA_10);
                             }
                             Some(IpEndpoint {port: _, addr}) if addr == embassy_net::IpAddress::Ipv4(Ipv4Addr::new(192, 168, 2, 15)) => {
                                 BUF_15.push_back(handle);
+                                circ_to_readings(&BUF_15, &mut DATA_15);
                             }
                             Some(IpEndpoint {port: _, addr}) if addr == embassy_net::IpAddress::Ipv4(Ipv4Addr::new(192, 168, 2, 20)) => {
                                 BUF_20.push_back(handle);
+                                circ_to_readings(&BUF_20, &mut DATA_20);
                             }
                             Some(IpEndpoint {port: _, addr}) if addr == embassy_net::IpAddress::Ipv4(Ipv4Addr::new(192, 168, 2, 25)) => {
                                 BUF_25.push_back(handle);
+                                circ_to_readings(&BUF_25, &mut DATA_25);
+
                             }
                             _=> {}
                         }

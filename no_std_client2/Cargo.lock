@@ -810,6 +810,7 @@ dependencies = [
  "ads1x1x",
  "embassy-executor",
  "embassy-net",
+ "embassy-sync",
  "embassy-time",
  "embedded-io-async",
  "embedded-time",

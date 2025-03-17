@@ -73,6 +73,8 @@ use serde_json_core;
 use embedded_io_async::Write;
 use ads1x1x::{channel::{self, SingleA0}, Ads1x1x, FullScaleRange, TargetAddr};
 
+const PRECALCED_RECIP: f32 = 9.53674317e-7; //1 / (2^32 -1)*(4096) (u32 is random numb)
+
 
 macro_rules! mk_static { //alternative to normal static cell for persistent storage (like nvs from esp-idf-svc) safer than static
     ($t:ty,$val:expr) => {{
@@ -89,7 +91,13 @@ struct SensorData { //struct for storing sensor id and data (id should be based 
 }
 
 #[embassy_executor::task]
-async fn read_send_current (sta_stack: Stack<'static>, peripherals: I2C0) { //for reading data
+async fn read_send_current (sta_stack: Stack<'static>, peripherals: I2C0, mut rng: Rng) { //for reading data
+
+    fn generate_data(rng: &mut Rng) -> f32 {
+        let mut x = rng.random() as f32; //gets random number
+        x = PRECALCED_RECIP*x;
+        return x;
+    }
     
     let sda: gpio::GpioPin<0> = unsafe {gpio::GpioPin::steal()}; //bypass the ownership way to get the pins
     let scl: gpio::GpioPin<1> = unsafe {gpio::GpioPin::steal()};
@@ -97,8 +105,8 @@ async fn read_send_current (sta_stack: Stack<'static>, peripherals: I2C0) { //fo
     let my_i2c = I2c::new(peripherals, Config::default())
     .unwrap().with_sda(sda).with_scl(scl);
     let mut adc_i2c = Ads1x1x::new_ads1115(my_i2c, TargetAddr::Gnd); //declares the ads object with the i2c
-    adc_i2c.set_data_rate(ads1x1x::DataRate16Bit::Sps860).unwrap(); //sets data rate at 860 samples per second
-    adc_i2c.set_full_scale_range(FullScaleRange::Within4_096V).unwrap(); //full scale range gets the voltage for +- 4096V
+    //adc_i2c.set_data_rate(ads1x1x::DataRate16Bit::Sps860).unwrap(); //sets data rate at 860 samples per second
+    //adc_i2c.set_full_scale_range(FullScaleRange::Within4_096V).unwrap(); //full scale range gets the voltage for +- 4096V
 
 
     let mut sta_rx_buffer = [0; 1536];
@@ -134,9 +142,11 @@ async fn read_send_current (sta_stack: Stack<'static>, peripherals: I2C0) { //fo
     }
 
     loop { //send data loop, also moved data declaration here so it can be updated within the loop - static maybe?
-        let raw_data = adc_i2c.read(SingleA0).unwrap(); //reads on channel a0 on adc
-        let voltage = (raw_data as f32/32767.0)*4096.0;
-        let data = SensorData { sensor_id: 10, sensor_value: voltage}; //placeholder for reading current via i2c
+        //let raw_data = adc_i2c.read(SingleA0).unwrap(); //reads on channel a0 on adc
+        //let voltage = (raw_data as f32/32767.0)*4096.0;
+        let fake_voltage = generate_data(&mut rng); //replace with real voltage above for actual reading
+        println!("{}", fake_voltage);
+        let data = SensorData { sensor_id: 10, sensor_value: fake_voltage}; //placeholder for reading current via i2c
         //let jbuffer = [0u8; 1024]; //128 birs fine probably since struct is small note: couldnt get buffer to work so string instead
         let mut sendable:String<128>  = serde_json_core::to_string(&data).unwrap(); //slice up data for transmission
         sendable.push_str("\r\n\r\n").unwrap(); //append so i can identify end of string at server
@@ -226,7 +236,7 @@ async fn main(spawner: Spawner) {
     let init = &*mk_static!(
         EspWifiController<'static>,
         init(timg0.timer0, rng.clone(), peripherals.RADIO_CLK).unwrap() //switched rng.clone to into, not sure the consequences
-    );
+    ); 
 
     let wifi = peripherals.WIFI; //handle for peripherals
 
@@ -301,9 +311,9 @@ async fn main(spawner: Spawner) {
     Timer::after(Duration::from_secs(1)).await;
 }
 
-    
+    let generate_data_rng = rng.clone(); //clone the rng so that theres no ownership issues w/ wifi controller
 
-    spawner.spawn(read_send_current(sta_stack, per_pins)).ok();
+    spawner.spawn(read_send_current(sta_stack, per_pins, generate_data_rng)).ok();
 
 loop {
     Timer::after(Duration::from_secs(5)).await;

@@ -33,9 +33,54 @@ Window {
         onClicked: setText()
     }
 
+    RowLayout {
+    Layout.fillWidth: true
+    spacing: 10
+
+    Text {
+        id: firstclientstatus
+        text: "Status: Disconnected"
+        Layout.alignment: Qt.AlignLeft
+    }
+
+    Text {
+        id: secondclientstatus
+        text: "Status: Disconnected"
+        Layout.alignment: Qt.AlignLeft
+    }
+
+
     Button {
-        text: "Show graph"
-        Layout.alignment: Qt.AlignHCenter
+        text: "Show Client 1"
+        Layout.alignment: Qt.AlignRight
+        Layout.margins: 20
+        onClicked: {
+            backend.showGraph()
+        }
+    }
+
+    Button {
+        text: "Show Client 2"
+        Layout.alignment: Qt.AlignRight
+        Layout.margins: 20
+        onClicked: {
+            backend.showGraph()
+        }
+    }
+
+    Button {
+        text: "Show Client 3"
+        Layout.alignment: Qt.AlignRight
+        Layout.margins: 20
+        onClicked: {
+            backend.showGraph()
+        }
+    }
+
+    Button {
+        text: "Show Client 4"
+        Layout.alignment: Qt.AlignRight
+        Layout.margins: 20
         onClicked: {
             backend.showGraph()
         }
@@ -43,6 +88,6 @@ Window {
 
     }
 
+    }
+
 }
-
-
