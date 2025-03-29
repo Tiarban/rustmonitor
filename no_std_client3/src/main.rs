@@ -64,8 +64,8 @@ async fn read_send_current (sta_stack: Stack<'static>, peripherals: I2C0, mut rn
         return x;
     }
     
-    let sda: gpio::GpioPin<0> = unsafe {gpio::GpioPin::steal()}; //bypass the ownership way to get the pins
-    let scl: gpio::GpioPin<1> = unsafe {gpio::GpioPin::steal()};
+    let sda: gpio::GpioPin<8> = unsafe {gpio::GpioPin::steal()}; //bypass the ownership way to get the pins
+    let scl: gpio::GpioPin<9> = unsafe {gpio::GpioPin::steal()};
 
     let my_i2c = I2c::new(peripherals, Config::default())
     .unwrap().with_sda(sda).with_scl(scl);
@@ -107,8 +107,9 @@ async fn read_send_current (sta_stack: Stack<'static>, peripherals: I2C0, mut rn
     }
 
     loop { //send data loop, also moved data declaration here so it can be updated within the loop - static maybe?
-        let raw_data = adc_i2c.read(SingleA0).unwrap(); //reads on channel a0 on adc
+        let raw_data = nb::block!(adc_i2c.read(SingleA0)).unwrap(); //reads on channel a0 on adc
         let voltage = (raw_data as f32/32767.0)*4096.0;
+        println!("{}", voltage);
         //let fake_voltage = generate_data(&mut rng); //replace with real voltage above for actual reading
         //println!("{}", fake_voltage);
         let data = SensorData { sensor_id: 20, sensor_value: voltage}; //placeholder for reading current via i2c
