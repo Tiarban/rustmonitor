@@ -382,7 +382,7 @@ loop { //first loop checks connection, inner loop reads until done.
                 client4: DATA_25,
             };
             let jsonpayload:String<2000>  = serde_json_core::to_string(&totalreadings).unwrap();
-            let mut webpage: String<9000> = String::new(); //need to use strings constructor, not different string val
+            let mut webpage: String<3000> = String::new(); //need to use strings constructor, not different string val
             write!( webpage,
                 "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n\r\n{}",
             jsonpayload,

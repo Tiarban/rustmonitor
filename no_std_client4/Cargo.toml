@@ -1,0 +1,45 @@
+[package]
+name = "no_std_client"
+version = "0.1.0"
+authors = ["Tiarban <tiarnanryan13@gmail.com>"]
+edition = "2021"
+license = "Apache-2.0"
+
+[dependencies]
+embassy-executor = { version = "0.7.0", features = ["task-arena-size-163840"] } #manually increased task arena size due to large amoutn
+embassy-time = "0.4.0"
+esp-backtrace = { version = "0.14.2", features = [
+    "esp32c3",
+    "exception-handler",
+    "panic-handler",
+    "println",
+] }
+esp-hal = { version = "0.23.1", features = [ "esp32c3" ] }
+esp-hal-embassy = { version = "0.6.0", features = ["esp32c3"] }
+esp-println = { version = "0.12.0", features = ["esp32c3", "log"] }
+esp-wifi = { version = "0.12.0", features = ["esp32c3", "wifi", "utils"] }
+log = { version = "0.4.22" }
+smoltcp = { version = "0.12.0", default-features = false, features = [ "medium-ethernet", "socket-raw", "proto-ipv4"] }
+embedded-time = "=0.12.1"
+embassy-net = { version = "0.6.0", features = [ "tcp", "udp", "dhcpv4", "medium-ethernet"] }
+esp-alloc = "0.6.0"
+heapless = "0.8.0"
+static_cell = "2.1.0"
+serde-json-core = "0.6.0"
+serde = {version = "1.0.217", default-features = false }
+embedded-io-async = "0.6.1"
+ads1x1x = "0.3.0"
+
+[profile.dev]
+# Rust debug is too slow.
+# For debug builds always builds with some optimization
+opt-level = "s"
+
+[profile.release]
+codegen-units = 1 # LLVM can perform better optimizations using a single thread
+debug = 2
+debug-assertions = false
+incremental = false
+lto = 'fat'
+opt-level = 's'
+overflow-checks = false
