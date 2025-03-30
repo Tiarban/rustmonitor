@@ -74,8 +74,8 @@ async fn read_send_current (sta_stack: Stack<'static>, peripherals: I2C0, mut rn
     adc_i2c.set_full_scale_range(FullScaleRange::Within4_096V).unwrap(); //full scale range gets the voltage for +- 4096V
 
 
-    let mut sta_rx_buffer = [0; 1536];
-    let mut sta_tx_buffer = [0; 1536];
+    let mut sta_rx_buffer  = [0; 1536];
+    let mut sta_tx_buffer  = [0; 1536];
 
 
 
@@ -108,7 +108,7 @@ async fn read_send_current (sta_stack: Stack<'static>, peripherals: I2C0, mut rn
 
     loop { //send data loop, also moved data declaration here so it can be updated within the loop - static maybe?
         let raw_data = nb::block!(adc_i2c.read(SingleA0)).unwrap(); //reads on channel a0 on adc
-        let voltage = (raw_data as f32/32767.0)*4096.0;
+        let voltage = (raw_data as f32/2048.0)*4096.0;
         println!("{}", voltage);
         //let fake_voltage = generate_data(&mut rng); //replace with real voltage above for actual reading
         //println!("{}", fake_voltage);
@@ -202,7 +202,7 @@ async fn main(spawner: Spawner) {
     let init = &*mk_static!(
         EspWifiController<'static>,
         init(timg0.timer0, rng.clone(), peripherals.RADIO_CLK).unwrap() //switched rng.clone to into, not sure the consequences
-    ); 
+    );
 
     let wifi = peripherals.WIFI; //handle for peripherals
 

@@ -238,12 +238,11 @@ unsafe{  //static mutable variables arent safe but fine for now probably
         println!("Building new tcp socket for client...");
         let new_client_id: usize  = CLIENT_COUNT.load(Ordering::Relaxed).try_into().unwrap(); //load client count to represent the address of static buffer
         println!("Current client count: {}", new_client_id);
+        if new_client_id > 3 {break;}
         let mut client_socket = TcpSocket::new(stack, &mut RX_CLIENT_BUFFER_POOL[new_client_id], &mut TX_CLIENT_BUFFER_POOL[new_client_id]);
         client_socket.set_timeout(Some(embassy_time::Duration::from_secs(60)));
 
         //following moved from handler to here so after socket is made, increment is done immediatley
-        let current_count = CLIENT_COUNT.load(Ordering::Relaxed); //reload client count
-        CLIENT_COUNT.store(current_count.wrapping_add(1), Ordering::Relaxed); //modify and store with relaxed ordering for now
         
 
         println!("Waiting for client connection..."); //accept requests from client
@@ -257,6 +256,8 @@ unsafe{  //static mutable variables arent safe but fine for now probably
             Ok(()) =>{
                 println!("Client handler spawned: {:?}", client_socket.remote_endpoint());
                 spawner.spawn(client_handler(client_socket)).ok();
+                let current_count = CLIENT_COUNT.load(Ordering::Relaxed); //reload client count
+                CLIENT_COUNT.store(current_count.wrapping_add(1), Ordering::Relaxed); //modify and store with relaxed ordering for now
         },
             Err(e) => println!("Client connection error: {:?}", e),
         }
@@ -282,6 +283,9 @@ unsafe{  //static mutable variables arent safe but fine for now probably
             */
 
     }
+    }
+    loop{
+    Timer::after(Duration::from_secs(5)).await;
     }
 }
 
@@ -332,7 +336,7 @@ loop { //first loop checks connection, inner loop reads until done.
         let r = socket
             .accept(IpListenEndpoint {
                 addr: None,
-                port: 8080,
+                port: 8000,
             })
             .await;
         println!("Connected to GUI...");
@@ -381,8 +385,8 @@ loop { //first loop checks connection, inner loop reads until done.
                 client3: DATA_20,
                 client4: DATA_25,
             };
-            let jsonpayload:String<2000>  = serde_json_core::to_string(&totalreadings).unwrap();
-            let mut webpage: String<3000> = String::new(); //need to use strings constructor, not different string val
+            let jsonpayload:String<4000>  = serde_json_core::to_string(&totalreadings).unwrap();
+            let mut webpage: String<9000> = String::new(); //need to use strings constructor, not different string val
             write!( webpage,
                 "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n\r\n{}",
             jsonpayload,
@@ -401,10 +405,10 @@ loop { //first loop checks connection, inner loop reads until done.
                     if let Err(e) = r {
             println!("flush error: {:?}", e);
         }
-        Timer::after(Duration::from_millis(1000)).await;
+        Timer::after(Duration::from_millis(100)).await;
 
         socket.close();
-        Timer::after(Duration::from_millis(1000)).await;
+        Timer::after(Duration::from_millis(100)).await;
 
         socket.abort();
     

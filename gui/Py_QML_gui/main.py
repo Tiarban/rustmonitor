@@ -95,22 +95,22 @@ class Netstuff(QObject):
         self.win3.show()
         self.win4.show()
 
-    def calcPowerToaster(input: float) -> float:
+    def calcPowerToaster(self, input: float) -> float:
         voltage= input/1000.0
         resistance = 60.80
         return round(((voltage ** 2)/resistance), 4)
 
-    def calcPowerHalobulb(input: float) -> float:
+    def calcPowerHalobulb(self, input: float) -> float:
         voltage= input/1000.0
         resistance = 18892.29
         return round(((voltage ** 2)/resistance), 4)
 
-    def calcPowerKettle(input: float) -> float:
+    def calcPowerKettle(self, input: float) -> float:
         voltage= input/1000.0
         resistance = 24.05
         return round(((voltage ** 2)/resistance), 4)
 
-    def calcPowerIron(input: float) -> float:
+    def calcPowerIron(self, input: float) -> float:
         voltage= input/1000.0
         resistance = 26.45
         return round(((voltage ** 2)/resistance), 4)
@@ -119,7 +119,7 @@ class Netstuff(QObject):
 
     @Slot()
     def sendRequest(self):
-        url = QUrl("http://192.168.2.1:8080")
+        url = QUrl("http://192.168.2.1:8000")
         request = QNetworkRequest(url)
         self.reply = self.nam.get(request) #calls get on the selfs request variable (defined above)
 
@@ -134,7 +134,7 @@ class Netstuff(QObject):
 
             #here i want to put the values i get from readings into the plots declared above
             data1 = readings["client1"].get("readings", [])
-            times1 = [item["sensor_time"] for item in data1]
+            times1 = [item["sensor_time"]/1000.0 for item in data1]
             values1 = [item["sensor_value"] for item in data1]
             power_values1 = [self.calcPowerToaster(v) for v in values1]
             id1 = [item["sensor_id"] for item in data1]
@@ -157,7 +157,7 @@ class Netstuff(QObject):
 
 
             data2 = readings["client2"].get("readings", [])
-            times2 = [item["sensor_time"] for item in data2]
+            times2 = [item["sensor_time"]/1000.0 for item in data2]
             values2 = [item["sensor_value"] for item in data2]
             power_values2 = [self.calcPowerHalobulb(v) for v in values2]
             id2 = [item["sensor_id"] for item in data2]
@@ -177,7 +177,7 @@ class Netstuff(QObject):
 
 
             data3 = readings["client3"].get("readings", [])
-            times3 = [item["sensor_time"] for item in data3]
+            times3 = [item["sensor_time"]/1000.0 for item in data3]
             values3 = [item["sensor_value"] for item in data3]
             power_values3 = [self.calcPowerKettle(v) for v in values3]
             id3 = [item["sensor_id"] for item in data3]
@@ -197,7 +197,7 @@ class Netstuff(QObject):
 
 
             data4 = readings["client4"].get("readings", [])
-            times4 = [item["sensor_time"] for item in data4]
+            times4 = [item["sensor_time"]/1000.0 for item in data4]
             values4 = [item["sensor_value"] for item in data4]
             power_values4 = [self.calcPowerIron(v) for v in values4]
             id4 = [item["sensor_id"] for item in data4]
@@ -248,7 +248,7 @@ if __name__ == "__main__":
     netstuff = Netstuff(Data) #takes data as an argument so it can be set in the processreply
     timer = QTimer() #initialse timer for repeated network requests
     timer.timeout.connect(netstuff.sendRequest) #pipes the timeout signal to send request (and therefore process reply)
-    timer.start(1000) #timer repeats every 500ms
+    timer.start(100) #timer repeats every 500ms
 
 
 
