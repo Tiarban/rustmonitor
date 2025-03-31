@@ -240,7 +240,7 @@ unsafe{  //static mutable variables arent safe but fine for now probably
         println!("Current client count: {}", new_client_id);
         if new_client_id > 3 {break;}
         let mut client_socket = TcpSocket::new(stack, &mut RX_CLIENT_BUFFER_POOL[new_client_id], &mut TX_CLIENT_BUFFER_POOL[new_client_id]);
-        client_socket.set_timeout(Some(embassy_time::Duration::from_secs(60)));
+        client_socket.set_timeout(Some(embassy_time::Duration::from_secs(10)));
 
         //following moved from handler to here so after socket is made, increment is done immediatley
         
