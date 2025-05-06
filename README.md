@@ -1,4 +1,4 @@
-# Rust-Powered Multi-Channel Energy Monitor
+# RustMonitor: Rust-Powered Multi-Channel Energy Monitor
 
 A bare-metal Rust client–server system for real-time, multi-channel home-energy monitoring. ESP32-C3 devices sample voltage via ADS1015 ADCs, send JSON over TCP to a Rust-powered server, and display data in a Python/Qt GUI.
 
